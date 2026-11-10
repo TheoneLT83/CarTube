@@ -22,8 +22,8 @@ title strip, BMW's status icons and clock stay in view.
 
 ## Install
 
-CarTube is a default source of [TheoneLT83/mgu-store](https://github.com/TheoneLT83/mgu-store) (Store 0.9.59 or newer) and
-of the iDrive 7 Assistant. With an older Store: Settings, **Add source**, `TheoneLT83/CarTube`, **Releases**.
+CarTube is a default source of [TheoneLT83/mgu-store](https://github.com/TheoneLT83/mgu-store) (its updater 0.8.38 or newer) and
+of the iDrive7 Assistant (1.9.90 or newer). With an older updater: Settings, **Add source**, `TheoneLT83/CarTube`, **Releases**.
 
 Install **CarTube** in the Store. It brings, as its requirements, its service `cartube-d`, Node.js 22
 (`cartube-node22`) from this source, and from the Store's own source the renderer `mgu-render`, `mgu-python`, the
