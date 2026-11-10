@@ -2,6 +2,7 @@
 
 ## 1.0.1 (app)
 
+- **The picture shows**: the app reads the frames where the released decoder writes them (`/dev/shm/mgu-video-ridetube`); only the sound played.
 - **Settings tab on iDrive 7 too**: the account and the settings (video while driving, quality, SponsorBlock...).
 
 ## 1.0.0 (app and service)
@@ -19,6 +20,6 @@ idrive7-apps look, for TheoneLT83's MGU Store. Their history: `docs/history/`.
   page: Online · Wi-Fi / phone / USB, Connecting, Offline, or No MGU Store internet. The service requires `mgu-uplink`.
 - **The idrive7-apps theme**: its background, text and accent red instead of RideTube's navy and pink.
 - **Its own names**: `cartube` / `cartube8`, `cartube-d`, `cartube-node22`, `/run/cartube-d`, `/var/opt/cartube-d`,
-  `/dev/shm/mgu-video-cartube`, logging ids OAC1 / CTB8: it can sit beside RideTube.
+  logging ids OAC1 / CTB8: it can sit beside RideTube.
 - **The release**: one catalog for iDrive 7 and iDrive 8, published to this repository's `catalog` release on every
   change to `main`.

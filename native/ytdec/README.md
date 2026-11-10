@@ -3,7 +3,7 @@
 The video half of CarTube (BMW iDrive 7 MGU, Apollo Lake,
 Intel HD 505). Reads what the car's fetcher (`cartube-d/ytfetch.py`) writes, decodes H.264
 on the GPU with the unit's Intel Media SDK, scales it with MSDK VPP and writes
-I420 frames to mgu-render's video file `/dev/shm/mgu-video-cartube` (MGVF,
+I420 frames to mgu-render's video file `/dev/shm/mgu-video-ridetube` (MGVF,
 mgu-render `PROTOCOL.md`, "Video"), paced by the audio clock that `ytd.js`
 sends on stdin.
 
@@ -79,7 +79,7 @@ fatal signal or exception.
 
 ## MGVF output
 
-`/dev/shm/mgu-video-cartube`: created with `O_NOFOLLOW`, 0600, `fchown` to
+`/dev/shm/mgu-video-ridetube`: created with `O_NOFOLLOW`, 0600, `fchown` to
 `nobody` (a warning in the log when not root), 64-byte header + 3 slots,
 BT.709 limited range. The writer fills slot (slot+1)%3, then stores slot,
 then seq+1 (release). The file is left in place on exit (the app drops the
@@ -88,7 +88,7 @@ reads it with `pread` (gfx.c), never `mmap`, so a shrink cannot SIGBUS it.
 
 Running as `nobody` (ytd.js): `/dev/dri/renderD128` is `root:video 0660`, so
 the unit needs `SupplementaryGroups=video` or `init` fails (exit 1); a
-root-owned `/dev/shm/mgu-video-cartube` left by a root run blocks a `nobody`
+root-owned `/dev/shm/mgu-video-ridetube` left by a root run blocks a `nobody`
 ytdec (exit 2); `fchown` to nobody only works as root, otherwise the file
 stays the caller's uid, which mgu-render also accepts.
 

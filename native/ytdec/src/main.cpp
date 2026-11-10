@@ -5,7 +5,7 @@
  * Reads <folder>/index.bin + video.h264 (yt/proxy), decodes on the GPU
  * (Intel Media SDK, decoder_msdk.cpp from waze-on-cluster), fits (or with
  * --fill crops) each picture into W x H (default 1280x720) and writes it to
- * /dev/shm/mgu-video-cartube for mgu-render, paced by the audio clock from stdin.
+ * /dev/shm/mgu-video-ridetube for mgu-render, paced by the audio clock from stdin.
  * stdin, one command a line: clock <elapsed_ms> <mono_ms> | pause | resume |
  * seek <ms> | video 0|1 | quit (EOF = quit). stdout: JSON lines, ready,
  * stats every 2 s, eof, error. player.h has the rules.
@@ -41,7 +41,7 @@ namespace {
 
 int g_log = 2;   /* log fd; stderr until --log opens */
 
-const char kShmPath[] = "/dev/shm/mgu-video-cartube";
+const char kShmPath[] = "/dev/shm/mgu-video-ridetube";
 
 int64_t mono_ms()
 {

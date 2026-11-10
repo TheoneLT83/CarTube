@@ -3,7 +3,7 @@
  * CarTube - search and play videos through the car daemon cartube-d (ytd.js, a root service), which
  * fetches them on the car itself, plays the sound through BMW's own media player (the car's audio source)
  * and decodes the picture (ytdec) into
- * /dev/shm/mgu-video-cartube, which the renderer (mgu-render) draws in this app's layer (op 19).
+ * /dev/shm/mgu-video-ridetube (the name the released decoder writes), which the renderer (mgu-render) draws in this app's layer (op 19).
  *
  * Screens (a TV-style dark look: navy, neon pink and cyan, big 16:9 tiles):
  *   VIEW  (first) drawn page. Browsing: an icon rail on the left (Search = the HMI menu, Home, Subscriptions,
@@ -57,7 +57,7 @@ const { spell } = require('./speller');
 
 const W = PAGE.w, H = PAGE.h;                             // 1600 x 520 (iDrive 8: 2080 x 520)
 const BOX = { x: 12, y: 38, w: W - 24, h: 432 };         // the video, in the page's visible part (y 38..520)
-const VID = 1, VPATH = process.env.MGU_YT_VIDEO || '/dev/shm/mgu-video-cartube';     // (env: tests)
+const VID = 1, VPATH = process.env.MGU_YT_VIDEO || '/dev/shm/mgu-video-ridetube';     // (env: tests)
 const POOL0 = 8, POOL = 56;                               // picture ids POOL0.. for the thumbs drawn (a pool, by video)
 const TOP = 38;                                          // the page shows from here down (the kit: y 38..520 + extra)
 const RAIL_W = 12;                                       // the page's left edge (the pages are the header's tabs)

@@ -14,7 +14,7 @@ run on the car; nothing is downloaded for keeps: the cache holds the last few vi
   `{"sourceID": n, "sinkID": n, "instance": "OapGenericMedia"}` (any of them). A MediaPlayer without the instance
   says which ones it has.
 - video: `ytdec --dir cache/<id> --rect WxH [--fill] --log /var/opt/cartube-d/log/ytdec.log`, which
-  writes `/dev/shm/mgu-video-cartube` for mgu-render; paced by `clock <elapsed_ms> <mono_ms>` lines.
+  writes `/dev/shm/mgu-video-ridetube` for mgu-render; paced by `clock <elapsed_ms> <mono_ms>` lines.
 - media: `/var/opt/cartube-d/cache/<id>/` {meta.json, thumb.rgba, audio.m4a, index.bin, video.h264, and
   `audio.head.m4a` while the rest of the audio downloads}, written on the car by the fetcher (below).
 
@@ -168,7 +168,7 @@ starts node with `--max-http-header-size=65536`: the TV page's headers pass 8 kB
 - The daemon runs as root: it talks SOME/IP to BMW's MediaPlayer. Every internet request runs as the fetch uid
   instead (above).
 - ytdec also runs as root (accepted risk, not verified otherwise on the car). It opens the GPU's render node
-  `/dev/dri/renderD128` for the Intel Media SDK and writes the frames to `/dev/shm/mgu-video-cartube` for
+  `/dev/dri/renderD128` for the Intel Media SDK and writes the frames to `/dev/shm/mgu-video-ridetube` for
   mgu-render, and running it under another uid was not tested on a head unit. It reads only the video folder
   the daemon names (`--dir`) and takes commands only from the daemon's pipe. It opens no socket and fetches
   nothing.
