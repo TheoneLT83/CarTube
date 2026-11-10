@@ -1,0 +1,167 @@
+#!/usr/bin/env python3
+"""Lays out the MGU Store catalog of this repository in dist/release/: catalog.json, the app's package, the service's
+tool kit and the app icon. Upload every file of dist/release/ as an asset of a GitHub release tagged `catalog`.
+
+The app's package differs by head unit, because the Store's deploy tool gives an app BMW's oap-sdk differently:
+  iDrive 7: the OAP package without node_modules/oap-sdk (the head unit generates that module from an app on the car);
+  iDrive 8: the app's source package (mgu-app.json; catalog "build": "unit"), which the head unit builds, linking the
+            app's entry module against the oap-sdk of an app on the car. The deploy tool generates no oap-sdk module on
+            iDrive 8: an OAP package there installs, shows its tile and never starts (CarTube 0.4.0 to 0.4.2).
+
+Build first:  python3 kit/tools/build.py cartube                      (dist/cartube@<v>.tgz, iDrive 7)
+              python3 kit/tools/build.py --hmi ID8 cartube            (dist/src/cartube8@<v>.tgz, iDrive 8)
+              (cd native/ytdec && make target)
+              (cd native/cartube-d && MGU_STORE=... ./build.sh)      (its dist/)
+Then:         python3 tools/release.py [--base URL] [--repo owner/name] [--hmi ID7|ID8|both] [--tool <kit.tgz> ...]
+--base: where the car downloads the assets from; default the public release download of the `catalog`
+release. For a private repository, list the assets' API URLs instead (docs/PUBLISHING.md of the Store).
+--repo: the GitHub repository whose `catalog` release holds the assets (default this one, TheoneLT83/CarTube).
+--hmi: the head units this release is for (default ID8: this repository is CarTube for iDrive 8); its tools are
+listed for those head units only.
+--tool: another tool kit to list beside the service (cartube-node22, so that the release is whole on its own).
+tools/release.sh does all of it for this repository's release.
+"""
+import argparse, gzip, hashlib, io, json, os, shutil, sys, tarfile
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+REPO = 'TheoneLT83/CarTube'     # (from waliworld/iDrive8-RideTube and JustAnotherPU/ridetube)
+APP = 'cartube'
+# one Store entry per head unit, built from the same app (an entry's requirements hold for every car it installs on: the
+# controller gate is iDrive 7's only)
+APPS = (
+    (APP, ['ID7'], lambda d: {'cartube-d': d, 'mgu-render': '0.6.11', 'mgu-inputgate': '1.0.0'}),
+    # iDrive 8: mgu-render 0.6.10+ shows layer apps there (yield surfaces); mgu-deploy 0.7.16+ keeps the tile once the
+    # car has synced its apps with BMW's backend (the provisioning fallback)
+    (APP + '8', ['ID8'], lambda d: {'cartube-d': d, 'mgu-render': '0.6.11', 'mgu-deploy': '0.7.16'}),
+)
+TOOLS = ('cartube-d',)
+
+
+def sha256(path):
+    h = hashlib.sha256()
+    with open(path, 'rb') as f:
+        for b in iter(lambda: f.read(1 << 20), b''):
+            h.update(b)
+    return h.hexdigest()
+
+
+def strip_sdk(src, dst, mtime):
+    """The OAP package again, without node_modules/oap-sdk, sorted, owner 0:0, one mtime."""
+    with tarfile.open(src, 'r:gz') as t:
+        members = [(m, t.extractfile(m).read() if m.isfile() else None) for m in t.getmembers()]
+    keep = [(m, d) for m, d in members if 'node_modules/oap-sdk' not in m.name]
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode='w', format=tarfile.USTAR_FORMAT) as out:
+        for m, d in sorted(keep, key=lambda x: x[0].name):
+            m.uid = m.gid = 0
+            m.uname = m.gname = ''
+            m.mtime = mtime
+            out.addfile(m, io.BytesIO(d) if d is not None else None)
+    with open(dst, 'wb') as f, gzip.GzipFile(fileobj=f, mode='wb', mtime=mtime, filename='') as g:
+        g.write(buf.getvalue())
+    with tarfile.open(dst, 'r:gz') as t:
+        assert not any('oap-sdk' in n for n in t.getnames()), 'oap-sdk left in the package'
+
+
+def artifact(path, base):
+    name = os.path.basename(path)
+    return {'name': name, 'size': os.path.getsize(path), 'sha256': sha256(path), 'url': base + name}
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--repo', default=REPO)
+    ap.add_argument('--base', default=None)
+    ap.add_argument('--hmi', choices=['ID7', 'ID8', 'both'], default='both')
+    ap.add_argument('--tool', action='append', default=[], help='another tool kit (.tgz) to list')
+    a = ap.parse_args()
+    a.base = a.base or 'https://github.com/%s/releases/download/catalog/' % a.repo
+    hmis = ['ID7', 'ID8'] if a.hmi == 'both' else [a.hmi]
+    apps = [x for x in APPS if set(x[1]) <= set(hmis)]
+    mtime = int(os.environ.get('SOURCE_DATE_EPOCH', '0'))
+    out = os.path.join(ROOT, 'dist', 'release')
+    shutil.rmtree(out, ignore_errors=True)
+    os.makedirs(out)
+
+    app = json.load(open(os.path.join(ROOT, 'apps', APP, 'app.json')))
+    tools = {t: json.load(open(os.path.join(ROOT, 'native', t, 'component.json'))) for t in TOOLS}
+    pkgs = {}
+    for aid, hmi, _ in apps:
+        name = '%s@%s.tgz' % (aid, app['version'])
+        if hmi == ['ID8']:
+            # the source package, as build.py packed it; what it must be is checked here once more, since a package of
+            # the other kind installs on iDrive 8 and never starts
+            pkg = os.path.join(ROOT, 'dist', 'src', name)
+            if not os.path.isfile(pkg):
+                sys.exit('release.py: %s missing (python3 kit/tools/build.py --hmi ID8 %s)' % (pkg, APP))
+            with tarfile.open(pkg, 'r:gz') as t:
+                names = t.getnames()
+                m = json.load(t.extractfile('mgu-app.json')) if 'mgu-app.json' in names else {}
+            if (m.get('id'), m.get('version')) != (aid, app['version']) or not all(f in names for f in m.get('modules', [None])) \
+                    or '%s/package.json' % m.get('tree') not in names or any('node_modules' in n or n.endswith('javascript/app.js') for n in names):
+                sys.exit('release.py: %s is not the source package of %s %s' % (pkg, aid, app['version']))
+            shutil.copy(pkg, os.path.join(out, name))
+            pkgs[aid] = name
+            continue
+        pkg = os.path.join(ROOT, 'dist', name)
+        if not os.path.isfile(pkg):
+            sys.exit('release.py: %s missing (python3 kit/tools/build.py %s)' % (pkg, APP))
+        strip_sdk(pkg, os.path.join(out, os.path.basename(pkg)), mtime)
+        pkgs[aid] = os.path.basename(pkg)
+        # the local build's packages hold BMW's oap-sdk: only dist/release/ is ever uploaded, so they go
+        for f in (pkg, pkg[:-4] + '.mgu'):
+            if os.path.exists(f):
+                os.remove(f)
+    for t, c in tools.items():
+        kit = os.path.join(ROOT, 'native', t, 'dist', '%s@%s.tgz' % (t, c['version']))
+        if not os.path.isfile(kit):
+            sys.exit('release.py: %s missing (cd native/%s && ./build.sh)' % (kit, t))
+        shutil.copy(kit, out)
+    icon = APP + '.png'
+    shutil.copy(os.path.join(ROOT, 'apps', APP, 'icon.png'), os.path.join(out, icon))
+    assert os.path.getsize(os.path.join(out, icon)) <= 128 * 1024
+
+    comps = [{
+        'id': aid, 'kind': 'app', 'title': app['title'],
+        'description': app['description'] if hmi == ['ID7'] else app['id8'].get('description', app['description']),
+        'version': app['version'], 'artifact': artifact(os.path.join(out, pkgs[aid]), a.base),
+        'requires': req(tools['cartube-d']['version']),
+        'uninstallable': True, 'mguHmi': hmi, 'icon': icon, 'iconSha256': sha256(os.path.join(out, icon)),
+    } for aid, hmi, req in apps]
+    for c in comps:
+        if c['mguHmi'] == ['ID8']:
+            c['build'] = 'unit'             # (the Store: the artifact is a source package, built on the head unit)
+    # the tools: listed for this release's head units only (each kit itself may say more)
+    for kit in a.tool:
+        with tarfile.open(kit, 'r:gz') as t:
+            c = json.load(t.extractfile('component.json'))
+        if os.path.basename(kit) != '%s@%s.tgz' % (c['id'], c['version']):
+            sys.exit('release.py: %s is not named <id>@<version>.tgz of its component.json' % kit)
+        shutil.copy(kit, out)
+        # requirements and uninstallable are catalog fields: from the tool's own component.json in this repository
+        for d in ('tools', 'native'):
+            src = os.path.join(ROOT, d, c['id'], 'component.json')
+            if os.path.isfile(src):
+                s = json.load(open(src))
+                c = dict(c, requires=s.get('requires', {}), uninstallable=s.get('uninstallable', False))
+                break
+        tools[c['id']] = c
+    for t, c in tools.items():
+        hu = [h for h in c.get('mguHmi', ['ID7']) if h in hmis]
+        if not hu:
+            sys.exit('release.py: %s is not for %s' % (t, ' or '.join(hmis)))
+        e = {'id': t, 'kind': 'tool', 'title': c['title'], 'description': c['description'], 'version': c['version'],
+             'artifact': artifact(os.path.join(out, '%s@%s.tgz' % (t, c['version'])), a.base),
+             'requires': c.get('requires', {}), 'uninstallable': bool(c.get('uninstallable')), 'mguHmi': hu}
+        if t != 'cartube-d':
+            e['optional'] = True       # (installed as a requirement, never offered on its own as an update)
+        comps.append(e)
+    with open(os.path.join(out, 'catalog.json'), 'w') as f:
+        json.dump({'schema': 2, 'components': comps}, f, indent=2)
+        f.write('\n')
+    for n in sorted(os.listdir(out)):
+        print('%10d  %s' % (os.path.getsize(os.path.join(out, n)), n))
+
+
+if __name__ == '__main__':
+    main()
