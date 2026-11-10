@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.2 (app)
+
+- **BMW's status icons and clock show** at the top right of every page; only a video in Full screen covers them.
+
 ## 1.0.1 (app)
 
 - **The picture shows**: the app reads the frames where the released decoder writes them (`/dev/shm/mgu-video-ridetube`); only the sound played.

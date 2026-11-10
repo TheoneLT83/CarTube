@@ -1090,6 +1090,8 @@ mgu.run({
                 frameNo++;
                 ownNow = !!cv.own;
                 if (full && !(mode === 'player' && model.active() && !noVideo())) full = false;     // driving, or nothing playing
+                // BMW's strip (its status icons and clock) shows over every page; the full-screen video alone covers it
+                if (ctx.display && ctx.display.screen) ctx.display.screen.hmi = full ? false : undefined;
                 if (mode === 'player' && cv.own && cv.place && cv.place.full && full) drawFull(cv);
                 else {
                     if (browsing() && !cv.own) drawRail(cv);
