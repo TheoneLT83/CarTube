@@ -112,7 +112,7 @@ mgu.run({
         }
         /* the page tabs in the header (BMW's strip, as every idrive7-apps app): [mode, name] */
         const tabList = () => [['home', 'Home'], ['subs', 'Subscriptions'], ['search', 'Search'], ['wl', 'Watch later']]
-            .concat(model.active() ? [['player', 'Now playing']] : []).concat(ID8 ? [['more', 'Settings']] : []);
+            .concat(model.active() ? [['player', 'Now playing']] : []).concat([['more', 'Settings']]);
         const tabSel = () => { const m = mode === 'results' ? 'search' : mode === 'channel' ? 'subs' : mode; return tabList().findIndex((x) => x[0] === m); };
         // where the HMI runs the screen its tabs are TABS; where the kit runs it, tabList()
         let ownNow = false;
@@ -250,7 +250,7 @@ mgu.run({
             const a = model.auth.state !== 'signed_in' ? 'Sign in' : signOutArmed ? 'Press again to sign out' : 'Sign out';
             if (a !== lastAcct) { lastAcct = a; ui.text('BTN_ACCOUNT', a); }
         }
-        // iDrive 8: the rail's Settings - the account (sign in, sign out pressed twice) and the settings sheet
+        // the Settings tab: the account (sign in, sign out pressed twice) and the settings sheet
         let menuArmed = 0;
         function openMenu() {
             const signedIn = () => model.auth.state === 'signed_in';

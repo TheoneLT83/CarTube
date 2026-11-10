@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.1 (app)
+
+- **Settings tab on iDrive 7 too**: the account and the settings (video while driving, quality, SponsorBlock...).
+
 ## 1.0.0 (app and service)
 
 CarTube: RideTube (JustAnotherPU) and its iDrive 8 port (waliworld) as one app for iDrive 7 and iDrive 8, in the
