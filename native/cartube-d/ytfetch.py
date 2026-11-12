@@ -677,17 +677,39 @@ def usable(info):
             and any(f.get('ext') == 'm4a' and f.get('vcodec') == 'none' for f in fs))
 
 
+# YouTube's bot check ("Sign in to confirm you're not a bot") is asked of a connection it distrusts, and not of
+# every client alike: these are tried one by one before the error stands
+BOT_CLIENTS = ['tv', 'web_safari', 'mweb']
+BOT_RE = re.compile(r'not a bot', re.I)
+
+
 def extract(yt_dlp, a, url):
-    """One extraction: PLAYER_CLIENTS first, then once more with yt-dlp's default clients."""
+    """One extraction: PLAYER_CLIENTS first, then once more with yt-dlp's default clients; asked the bot check,
+    each of BOT_CLIENTS."""
+    first = None
     if PLAYER_CLIENTS:
         p = dict(ydl_params(a, None), extractor_args={'youtube': {'player_client': PLAYER_CLIENTS}})
         try:
             info = yt_dlp.YoutubeDL(p).extract_info(url, download=False, process=False)
             if usable(info):
                 return info
-        except Exception:  # noqa: BLE001 - fall back to the default clients
-            pass
-    return yt_dlp.YoutubeDL(ydl_params(a, None)).extract_info(url, download=False, process=False)
+        except Exception as e:  # noqa: BLE001 - fall back to the default clients
+            first = e
+    try:
+        return yt_dlp.YoutubeDL(ydl_params(a, None)).extract_info(url, download=False, process=False)
+    except Exception as e:  # noqa: BLE001 - the bot check: other clients; anything else stands
+        if not (BOT_RE.search(str(e)) or BOT_RE.search(str(first or ''))):
+            raise
+        for c in BOT_CLIENTS:
+            p = dict(ydl_params(a, None), extractor_args={'youtube': {'player_client': [c]}})
+            try:
+                info = yt_dlp.YoutubeDL(p).extract_info(url, download=False, process=False)
+                if usable(info):
+                    print(f'bot check: {c} answered', file=sys.stderr, flush=True)
+                    return info
+            except Exception:  # noqa: BLE001 - the next client
+                pass
+        raise
 
 
 INFO_MAX_S = 1800  # stream URLs last ~6 h; a prefetch older than this is redone

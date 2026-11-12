@@ -381,6 +381,16 @@ mgu.run({
             while (lo < hi) { const m = (lo + hi + 1) >> 1; if (cv.textWidth(s.slice(0, m) + '…', size, opts) <= w) lo = m; else hi = m - 1; }
             return s.slice(0, lo).replace(/\s+$/, '') + '…';     // (no trimEnd on the unit's Node 8)
         };
+        // s in lines of at most w px, at most max of them (the last one ellipsised)
+        const textLines = (cv, s, size, w, max, opts) => {
+            const out = [];
+            String(s || '').split(/\s+/).filter(Boolean).forEach((word) => {
+                const last = out.length - 1, joined = last >= 0 ? out[last] + ' ' + word : word;
+                if (last >= 0 && cv.textWidth(joined, size, opts) <= w) out[last] = joined; else out.push(word);
+            });
+            if (out.length > max) out.splice(max - 1, out.length, out.slice(max - 1).join(' '));
+            return out.map((l, i) => (i === max - 1 ? fit(cv, l, size, w, opts) : l));
+        };
         const LIT = { literal: true }, LITB = { literal: true, font: 'bold' };
         // the idrive7-apps look: the kit's theme (its background, text and accent red), cards a shade lighter
         const TH0 = ctx.theme();
@@ -783,7 +793,8 @@ mgu.run({
             if (model.state === 'paused' && !mid) { cv.circle(cx, cy, 60, '#000000a0'); cv.arc(cx, cy, 57, 60, 0, 360, '#ffffff50'); tri(cv, cx + 5, cy, 46, '#ffffff'); }
             if (mid) {
                 if (model.state === 'paused') { cv.circle(cx, cy - 40, 46, '#000000a0'); tri(cv, cx + 4, cy - 40, 36, '#ffffff'); }
-                cv.text(fit(cv, mid, 34, 1500, LIT), W / 2, BOX.y + BOX.h / 2 + (model.state === 'paused' ? 50 : 12), 34, '#ffffff', { literal: true, align: 'center' });
+                const ls = textLines(cv, mid, 34, 1500, model.state === 'error' ? 2 : 1, LIT);
+                ls.forEach((l, i) => cv.text(l, W / 2, BOX.y + BOX.h / 2 + (model.state === 'paused' ? 50 : 12) + (i - (ls.length - 1) / 2) * 44, 34, '#ffffff', { literal: true, align: 'center' }));
             }
             // the progress bar at the bottom: the track, the part played, the scrubber; the times under it
             if (model.total > 0 && model.active() && model.state !== 'preparing') {
@@ -820,7 +831,9 @@ mgu.run({
             else if (!cv.place || !gpu()) mid = 'The picture needs the GPU renderer (mgu-render)';
             else if (!videoShown) mid = 'Starting the picture...';
             if (mid) {
-                cv.text(fit(cv, mid, 28, PBOX.w - 40, LIT), cx, cy + 10, 28, pod ? C.amber : '#ffffff', { literal: true, font: 'bold', align: 'center' });
+                // an error in up to three lines (YouTube's reasons are a sentence or two); the rest in one
+                const ls = textLines(cv, mid, 28, PBOX.w - 40, model.state === 'error' ? 3 : 1, LITB);
+                ls.forEach((l, i) => cv.text(l, cx, cy + 10 + (i - (ls.length - 1) / 2) * 38, 28, pod ? C.amber : '#ffffff', { literal: true, font: 'bold', align: 'center' }));
                 if (pod) cv.text('The picture comes back when the car is parked', cx, cy + 50, 20, C.dim, { literal: true, align: 'center' });
             }
             const px = PBOX.x + PBOX.w + 16, pw = W - 24 - px, top = TOP + 6;

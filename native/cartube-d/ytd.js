@@ -1445,13 +1445,25 @@ Daemon.prototype.stopFetch = function () {
         try { c.kill('SIGTERM'); } catch (e) { /* gone */ }
     });
 };
+/* What the player shows for an error YouTube gives in its own words (the log keeps them); the rest as it is. */
+const PLAIN = [
+    [/not a bot/i, 'YouTube wants this internet connection to prove it is not a bot. Try another network (phone hotspot or Wi-Fi), or later.'],
+    [/confirm your age|age-restricted|inappropriate for some users/i, 'This video is age-restricted: CarTube cannot play it.'],
+    [/members-only|join this channel/i, 'This video is for the channel\'s members only.'],
+    [/private video/i, 'This video is private.'],
+    [/not available in your country/i, 'This video is not available in this country.'],
+];
+function plainError(msg) {
+    const hit = PLAIN.find((p) => p[0].test(msg));
+    return hit ? hit[1] : msg;
+}
 Daemon.prototype.failPlayback = async function (msg) {
     this.log('error: ' + msg);
     this.ticking = false;
     this.killYtdec();
     await Promise.all([this.audio.release(), this.stopFetch()]);
     this.setState('error');
-    this.emit({ ev: 'error', msg: msg });
+    this.emit({ ev: 'error', msg: plainError(msg) });
 };
 // reason: 'idle' | 'ended' | null (internal, before a new play: no state event)
 Daemon.prototype.stop = async function (reason) {
@@ -1709,7 +1721,7 @@ Daemon.prototype.close = async function () {
     if (this.server) this.server.close();
 };
 
-module.exports = { qualityHeight: qualityHeight, channelTiles: channelTiles, Daemon: Daemon, Audio: Audio, Account: Account, feedItems: feedItems, isPlayable: isPlayable, feedShelves: feedShelves, ytRequest: ytRequest, uplinkLookup: uplinkLookup, pickFetchUid: pickFetchUid, fetchRequest: fetchRequest, listCache: listCache, pruneCache: pruneCache, isReady: isReady };
+module.exports = { plainError: plainError, qualityHeight: qualityHeight, channelTiles: channelTiles, Daemon: Daemon, Audio: Audio, Account: Account, feedItems: feedItems, isPlayable: isPlayable, feedShelves: feedShelves, ytRequest: ytRequest, uplinkLookup: uplinkLookup, pickFetchUid: pickFetchUid, fetchRequest: fetchRequest, listCache: listCache, pruneCache: pruneCache, isReady: isReady };
 
 // the uplink's DNS servers (its lease): the system resolver (127.0.0.1) answers no internet names. No
 // lease (uplink down or not installed): the system resolver, as before

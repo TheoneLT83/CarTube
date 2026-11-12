@@ -1161,6 +1161,13 @@ async function main() {
         ['TTTTTTTTTT1', 'TTTTTTTTTT2', 'TTTTTTTTTT3'].forEach((v) => { fs.unlinkSync(path.join(cache, v, 'thumb.rgba')); fs.rmdirSync(path.join(cache, v)); });
     });
 
+    await t('errors: YouTube\'s bot check and refusals in plain words, the rest as they are', async () => {
+        const { plainError } = require('../ytd.js');
+        assert.ok(/another network/.test(plainError('fetch: extract: ERROR: [youtube] IyRoV_BlGCE: Sign in to confirm you\u2019re not a bot. Use --cookies')));
+        assert.ok(/age-restricted/.test(plainError('fetch: extract: ERROR: [youtube] x: Sign in to confirm your age.')));
+        assert.strictEqual(plainError('fetch: timed out'), 'fetch: timed out');
+    });
+
     await t('channels: the FEchannels tiles -> id, name, @handle; videos, playlists and repeats skipped', async () => {
         const { channelTiles } = require('../ytd.js');
         const line = (txt) => ({ lineRenderer: { items: [{ lineItemRenderer: { text: { simpleText: txt } } }] } });

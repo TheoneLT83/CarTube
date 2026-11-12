@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.3 (app) and 1.0.1 (service)
+
+- **YouTube's "Sign in to confirm you're not a bot"**: asked of a connection YouTube distrusts. The service then tries
+  YouTube's TV, Safari and mobile web players before it gives up; if none plays, the player says so in plain words
+  (try another network: phone hotspot or Wi-Fi, or later). Age-restricted, members-only, private and blocked-country
+  videos are said plainly too.
+- **An error shows whole**: on the page in up to three lines, in Full screen in two.
+
 ## 1.0.2 (app)
 
 - **BMW's status icons and clock show** at the top right of every page; only a video in Full screen covers them.
