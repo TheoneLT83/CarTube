@@ -222,7 +222,7 @@ mgu.run({
             return even(BOX.w * s, 1920) + 'x' + even(BOX.h * s, 720);
         }
         // it: the tile tapped (its title and channel show while the video is prepared)
-        // list: the row it was picked from; the videos after it play next when one ends (autoplay)
+        // list: the shelf or the whole grid it was picked from; the videos after it play next when one ends (autoplay)
         const QUALITIES = ['auto', '720', '480', '360'];   // app.json's Video quality values, in the button's order
         let queue = [], nextAt = 0;
         function play(id, it, list) {
@@ -626,7 +626,8 @@ mgu.run({
                 if (sc.grid) for (let i = 0; i < sc.items.length; i += PER_ROW) chunks.push(sc.items.slice(i, i + PER_ROW));
                 chunks.forEach((items, k) => {
                     const title = k === 0 ? sc.title : null, h = (title ? HEAD_H : 0) + TILE_H + (sc.grid && k < chunks.length - 1 ? GRID_GAP : SHELF_GAP);
-                    rows.push({ title, sub: k === 0 ? sc.sub : null, items, y, h, hs: !sc.grid && items.length > PER_ROW, chan: !!sc.chan });
+                    // all: what plays on after a video of this row (a grid's: the whole grid)
+                    rows.push({ title, sub: k === 0 ? sc.sub : null, items, all: sc.items, y, h, hs: !sc.grid && items.length > PER_ROW, chan: !!sc.chan });
                     y += h;
                 });
             });
@@ -661,7 +662,7 @@ mgu.run({
                 for (let i = Math.max(0, off - 1); i <= Math.min(n - 1, off + PER_ROW); i++) {
                     const r = row.items[i], x = X0 + (i - off) * PITCH, key = letter + ':' + ri + ':' + r.id;
                     if (shown && x + TW > RAIL_W && x < W) (row.chan || r.act ? drawChan : drawTile)(cv, r, x, ty, key);
-                    const run = r.act ? () => r.act() : row.chan ? () => openChannel(r) : () => play(r.id, r, row.items);
+                    const run = r.act ? () => r.act() : row.chan ? () => openChannel(r) : () => play(r.id, r, row.all);
                     if (cv.own) { cv.target(x - 10, ty - 10, TW + 20, TILE_H + 16, run, key, 18); where[key] = { ri, i }; }
                 }
             });

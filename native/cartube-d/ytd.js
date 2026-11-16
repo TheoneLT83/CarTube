@@ -86,7 +86,7 @@ function qualityHeight(q, lease) {
 // members-only (or members-first) videos: a badge somewhere in the tile, its shape unknown (no capture) - matched on the text
 // shortcut: a JSON scan of the tile, swap for the badge's field once a real members tile is captured
 const isMembers = (t) => /BADGE_STYLE_TYPE_MEMBERS|"Members (only|first)"/i.test(JSON.stringify(t));
-const PERMANENT_RE = /unavailable|private|removed|terminated|copyright|members|age|confirm your age|not available in your country/i;
+const PERMANENT_RE = /unavailable|private|removed|terminated|copyright|members|age|confirm your age|not available in your country|live video/i;
 function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 function withTimeout(p, ms, what) {
     return new Promise(function (resolve, reject) {
@@ -1452,6 +1452,7 @@ const PLAIN = [
     [/members-only|join this channel/i, 'This video is for the channel\'s members only.'],
     [/private video/i, 'This video is private.'],
     [/not available in your country/i, 'This video is not available in this country.'],
+    [/live video/i, 'Live videos can\'t be played yet.'],
 ];
 function plainError(msg) {
     const hit = PLAIN.find((p) => p[0].test(msg));

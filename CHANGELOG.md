@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.4 (app) and 1.0.2 (service)
+
+- **Plays on through the whole list**: a video picked from a grid (Watch later, search results) is followed by the
+  rest of the grid, not only the rest of its row of four.
+- **Live videos say so at once**: a live (or upcoming, or just ended) video fails straight away with "Live videos
+  can't be played yet", with no retries. YouTube offers those only as HLS, which needs ffmpeg, not on the head unit.
+  (Both from JustAnotherPU's RideTube, GPL-3.0.)
+
 ## 1.0.3 (app) and 1.0.1 (service)
 
 - **YouTube's "Sign in to confirm you're not a bot"**: asked of a connection YouTube distrusts. The service then tries

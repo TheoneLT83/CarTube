@@ -823,6 +823,9 @@ def fetch(a):
         info = info or extract(yt_dlp, a, url)
     except Exception as e:  # noqa: BLE001 - any yt-dlp failure is reported to the daemon
         fail(f'extract: {e}')
+    # a live (or upcoming, or just ended) video comes as HLS only, which needs ffmpeg: said at once, not retried
+    if info.get('is_live') or info.get('live_status') in ('is_live', 'is_upcoming', 'post_live'):
+        fail('live video')
     meta = {'id': a.id, 'title': info.get('title'), 'channel': info.get('channel') or info.get('uploader'),
             'duration_s': info.get('duration'),
             'chapters': [[int((c.get('start_time') or 0) * 1000), str(c.get('title') or '')[:80]]

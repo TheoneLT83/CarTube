@@ -1165,6 +1165,7 @@ async function main() {
         const { plainError } = require('../ytd.js');
         assert.ok(/another network/.test(plainError('fetch: extract: ERROR: [youtube] IyRoV_BlGCE: Sign in to confirm you\u2019re not a bot. Use --cookies')));
         assert.ok(/age-restricted/.test(plainError('fetch: extract: ERROR: [youtube] x: Sign in to confirm your age.')));
+        assert.ok(/Live videos can't be played/.test(plainError('fetch: live video')));
         assert.strictEqual(plainError('fetch: timed out'), 'fetch: timed out');
     });
 
