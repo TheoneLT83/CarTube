@@ -105,6 +105,10 @@ const LAYOUTS = ['full', 'standard'];
 // the HMI's page animation when a screen opens (the picture shows after it)
 const SHOW_DELAY_MS = 350;
 
+// a drag let go runs on (Display._coast): its speed over the last COAST_SAMPLE_MS, from COAST_START px/ms, a frame every
+// COAST_FRAME_MS slowing by COAST_DECAY, until COAST_MIN px/ms
+const COAST_SAMPLE_MS = 100, COAST_START = 0.3, COAST_FRAME_MS = 16, COAST_DECAY = 0.94, COAST_MIN = 0.03;
+
 class Display {
     constructor(ui, log, spec, settings, themeFn) {
         this.ui = ui; this.log = log; this.spec = spec; this.settings = settings; this.theme = themeFn;
@@ -467,6 +471,31 @@ class Display {
         if (moved) this.tickHandlers.forEach((fn) => fn());
         return moved;
     }
+    /** A shelf dragged sideways by dx logical px (ctx.onSwipe, told where the finger went down). */
+    _swipeBy(dx) {
+        let moved = false;
+        try { moved = !!this.onSwipe(dx, this.downAt); } catch (e) { this.log.error('swipe', e); }
+        if (moved) this.tickHandlers.forEach((fn) => fn());
+        return moved;
+    }
+    /**
+     * Let go of a drag: it runs on at the finger's last speed (over its last COAST_SAMPLE_MS), slowing by COAST_DECAY a
+     * frame until under COAST_MIN px/ms or at the end; a sideways one then ends (ctx.onSwipeEnd: the shelf settles).
+     */
+    _coast(axis) {
+        const now = Date.now(), recent = (this.samples || []).filter((p) => now - p.t <= COAST_SAMPLE_MS), a = recent[0], b = recent[recent.length - 1];
+        const at = this.downAt;
+        const end = () => { if (axis === 'x' && this.onSwipeEnd) { try { this.onSwipeEnd(at); } catch (e) { this.log.error('swipe', e); } this.tickHandlers.forEach((fn) => fn()); } };
+        let v = a && b && b.t > a.t ? (axis === 'x' ? a.x - b.x : a.y - b.y) / (b.t - a.t) : 0;
+        if (Math.abs(v) < COAST_START) { end(); return; }
+        this._coastStop();
+        this.coastTimer = setInterval(() => {
+            const moved = axis === 'x' ? this._swipeBy(v * COAST_FRAME_MS) : this._scrollBy(v * COAST_FRAME_MS);
+            v *= COAST_DECAY;
+            if (!moved || Math.abs(v) < COAST_MIN) { this._coastStop(); end(); }
+        }, COAST_FRAME_MS);
+    }
+    _coastStop() { if (this.coastTimer) { clearInterval(this.coastTimer); this.coastTimer = null; } }
     /** Where place p of the ring is on screen (the surface's px): { x, y, w, h }. */
     _rectOf(p) {
         const pl = this.place, k = pl.scale;
@@ -532,7 +561,7 @@ class Display {
             const tab = !bar && (this.tabs || []).find(inside);
             const tgt = !bar && !tab && !this.sheet ? (this.pageTargets || []).find(inside) : null;
             const key = bar ? 'bar:' + bar.id : tab ? 'tab:' + tab.i : tgt ? 'tgt:' + tgt.key : this.sheet ? 'sheet:' + (this.sheetTargets || []).findIndex(inside) : null;
-            if (phase === 3 && this.dragging && !this.sheet) { this.dragging = false; this.ownDown = null; return; }
+            if (phase === 3 && this.dragging && !this.sheet) { this.dragging = false; this.ownDown = null; if (this.axis) this._coast(this.axis); return; }
             if (phase === 3 && !this.dragging && key && key === this.ownDown && (tab || tgt)) {
                 this.ownDown = null;
                 if (tab) this._openTab(tab.i);
@@ -544,19 +573,20 @@ class Display {
                 return;
             }
             // a finger moved on a sheet: its list follows (no tap then)
-            if (phase === 1) { this.ownDown = key; this.downAt = { x, y }; this.lastX = x; this.lastY = y; this.dragging = false; } else if (phase === 2) {
-                if (!this.sheet && this.onSwipe && !bar && !tab && this.downAt) {
-                    if (!this.dragging && Math.abs(x - this.downAt.x) > 14) this.dragging = true;
-                    if (this.dragging) {
-                        let moved = false;
-                        try { moved = !!this.onSwipe(this.lastX - x); } catch (e) { this.log.error('swipe', e); }
-                        if (moved) this.tickHandlers.forEach((fn) => fn());
-                    }
+            if (phase === 1) {
+                this.ownDown = key; this.downAt = { x, y }; this.lastX = x; this.lastY = y; this.dragging = false;
+                this.axis = null; this.samples = [{ t: Date.now(), x, y }]; this._coastStop();
+            } else if (phase === 2) {
+                // a drag keeps the way it began: sideways (onSwipe) or up and down (the page's scroll)
+                if (!this.sheet && !bar && !tab && this.downAt && !this.axis) {
+                    const ax = Math.abs(x - this.downAt.x), ay = Math.abs(y - this.downAt.y);
+                    if (ax > 14 && ax >= ay && this.onSwipe) this.axis = 'x';
+                    else if (ay > 14 && this.pageScroll && this.onScroll) this.axis = 'y';
+                    if (this.axis) this.dragging = true;
                 }
-                if (!this.sheet && this.pageScroll && this.onScroll && !bar && !tab && this.downAt) {
-                    if (!this.dragging && Math.abs(y - this.downAt.y) > 14) this.dragging = true;
-                    if (this.dragging) this._scrollBy(this.lastY - y);
-                }
+                if (this.axis === 'x') this._swipeBy(this.lastX - x);
+                if (this.axis === 'y') this._scrollBy(this.lastY - y);
+                if (this.axis) { this.samples.push({ t: Date.now(), x, y }); if (this.samples.length > 8) this.samples.shift(); }
                 if (this.sheet && this.sheet.scroll && !bar && this.downAt) {
                     if (!this.dragging && Math.abs(y - this.downAt.y) > 14) this.dragging = true;
                     if (this.dragging) { this.sheet.scroll(this.lastY - y); this._paintSheet(); }
@@ -565,7 +595,12 @@ class Display {
             } else if (phase === 3) {
                 const was = this.ownDown;
                 this.ownDown = null;
-                if (this.dragging) { this.dragging = false; if (this.sheet && this.sheet.release) this.sheet.release(); return; }
+                if (this.dragging) {
+                    this.dragging = false;
+                    if (this.sheet && this.sheet.release) this.sheet.release();
+                    else if (this.axis) this._coast(this.axis);
+                    return;
+                }
                 if (bar && was === key) { this._click(bar.id); return; }
                 if (this.sheet) {
                     const i = (this.sheetTargets || []).findIndex(inside);

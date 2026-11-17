@@ -282,6 +282,8 @@ async function appFrames() {
     hu.ctx.hideButton = (id, hide) => disp.hideButton(id, hide);
     hu.ctx.onPageFocus = (fn) => { disp.onPageFocus = fn; };
     hu.ctx.focus = (k) => disp.focusPage(k);
+    hu.ctx.onSwipe = (fn) => { disp.onSwipe = fn; };
+    hu.ctx.onSwipeEnd = (fn) => { disp.onSwipeEnd = fn; };
     hu.start();
     await until(() => d.cmds('auth_status').length, 3000, 'app connects and asks for the account');
     const POOL = (id) => id >= 8 && id < 64;
@@ -400,6 +402,28 @@ async function appFrames() {
         await hu.loopFn();
         assert.ok(disp.pageTargets.find((t) => t.key === 'ov:rw').w < 300, 'the controller shows it');
         console.log('ok   full-screen player: overlay controls, hides on a tap, a tap or the controller shows it');
+        // two quick taps on the left third: 10 s back (one seek once they rest); a single tap seeks nothing
+        const nTapSeek = d.cmds('seek').length;
+        disp.onTap(100, 300); await sleep(120); disp.onTap(100, 300);
+        await sleep(500);
+        assert.strictEqual(d.cmds('seek').length, nTapSeek + 1, 'a double tap on the left third: one seek');
+        disp.onTap(1800, 300);
+        await sleep(500);
+        assert.strictEqual(d.cmds('seek').length, nTapSeek + 1, 'a single tap on the right third: no seek');
+        console.log('ok   player: a double tap on a side third seeks 10 s');
+        // the kit: a sideways flick runs on after it is let go, then ends (the shelf settles)
+        const swiped = [];
+        let ended = null;
+        const keepSwipe = disp.onSwipe, keepEnd = disp.onSwipeEnd;
+        disp.onSwipe = (dx, at) => { swiped.push(dx); return true; };
+        disp.onSwipeEnd = (at) => { ended = at; };
+        disp._touch(1, 900, 400); await sleep(16); disp._touch(2, 860, 402); await sleep(16); disp._touch(2, 780, 403); await sleep(16);
+        disp._touch(2, 700, 404); disp._touch(3, 700, 404);
+        const during = swiped.length;
+        await until(() => ended, 3000, 'the flick ends');
+        assert.ok(swiped.length > during + 3 && ended.x === 900, 'it ran on ' + (swiped.length - during) + ' frames, then ended where it began');
+        disp.onSwipe = keepSwipe; disp.onSwipeEnd = keepEnd;
+        console.log('ok   kit: a flick runs on, then the shelf settles');
         // driving: podcast mode - no picture, the big controls always there (no overlay to wake)
         speedH({ speedVehicleCentreOfGravity: 50 * 64 });
         const seeks = d.cmds('seek').length;
@@ -592,9 +616,11 @@ async function appFrames() {
         const inX = (t) => t && t.x >= view.x0 && t.x + t.w <= view.x1;
         assert.ok(!inX(at(/^h:0:h0_4$/)), 'the 5th tile not whole at first');
         at(/^h:0:>$/).run();
+        await sleep(400);                                   // (it glides there)
         await drawn();
         assert.ok(inX(at(/^h:0:h0_4$/)) && at(/^h:0:<$/) && !at(/^h:0:h0_2$/), 'the arrow turned the shelf by four (and the back arrow shows)');
         at(/^h:0:<$/).run();
+        await sleep(400);
         await drawn();
         // the controller through every video of every shelf, as turning the knob would: each brought into view
         const ids = new Set();

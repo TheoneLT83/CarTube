@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.5 (app)
+
+- **Two quick taps on the player's left or right third** skip 10 s back or on; each more tap soon after, 10 s more.
+- **Smooth scrolling**: a page flicked up or down runs on after the finger lets go; a shelf follows the finger
+  sideways, runs on and settles on a tile; the shelf's arrows glide it four tiles instead of jumping. A drag keeps the
+  way it began (sideways or up and down). (Ideas from JustAnotherPU's RideTube, GPL-3.0.)
+
 ## 1.0.4 (app) and 1.0.2 (service)
 
 - **Plays on through the whole list**: a video picked from a grid (Watch later, search results) is followed by the

@@ -63,6 +63,8 @@ const TOP = 38;                                          // the page shows from 
 const RAIL_W = 12;                                       // the page's left edge (the pages are the header's tabs)
 const X0 = 36, TW = 320, TH = 180, PITCH = 348;          // tiles: 16:9 thumbs, four a row, the fifth peeking
 const PER_ROW = Math.floor((W - X0 - TW) / PITCH) + 1;      // (4; iDrive 8's wider page: 5, the sixth peeking)
+const GLIDE = 0.3;                                         // a shelf moving to a tile: this share of the way a frame
+const DOUBLE_TAP_MS = 350;                                  // the player: a second tap this soon on the same third seeks
 const TILE_H = TH + 98, HEAD_H = 50, SHELF_GAP = 30, GRID_GAP = 22;   // a tile with its text; a shelf's title row
 const OVERLAY_MS = 4000;                                 // the player's controls hide this long after a tap (playing)
 const SEARCH_MS = 8000;                                  // a search with no answer by then is an error on screen
@@ -337,7 +339,20 @@ mgu.run({
         const pinned = () => model.state !== 'playing' || !videoShown || noVideo() || !!askSeg();
         const overlay = () => pinned() || Date.now() < ovUntil || Date.now() < qrUntil;
         // a tap beside the controls (no target): hides them
-        if (ctx.onTap) ctx.onTap(() => { if (mode === 'player' && !pinned() && overlay()) { ovUntil = 0; dirty = true; } });
+        // two quick taps on the player's left / right third: 10 s back / on (each more tap soon after, 10 s more)
+        let lastTap = null;
+        if (ctx.onTap) ctx.onTap((x) => {
+            if (mode !== 'player') return;
+            const zone = x < W / 3 ? -1 : x > W * 2 / 3 ? 1 : 0, t = Date.now(), seeking = model.state === 'playing' || model.state === 'paused';
+            if (zone && seeking && lastTap && lastTap.zone === zone && t - lastTap.t < DOUBLE_TAP_MS) {
+                lastTap = { zone, t };
+                turnSeek(zone);
+                model.toast = { text: (zone < 0 ? '-' : '+') + Math.round(Math.abs(pend) / 1000) + ' s', until: t + 1000 };
+                return;
+            }
+            lastTap = { zone, t };
+            if (!pinned() && overlay()) { ovUntil = 0; dirty = true; }
+        });
         // the controller pushed left in the player: back to the list it came from; pushed left at a channel's
         // edge (the rail): back to Subscriptions. Both put the controller back on the tile it left from
         if (ctx.onBack) ctx.onBack((edge) => {
@@ -649,17 +664,19 @@ mgu.run({
                     const tw = cv.text(fit(cv, row.title, 30, 1100, LITB), X0, y + 34, 30, '#ffffff', LITB);
                     if (row.sub) cv.text(row.sub, X0 + tw + 18, y + 34, 22, C.dim, LIT);
                 }
+                // off: the first tile shown, between two while a finger drags the shelf or it glides (settles on one)
                 const max = row.hs ? n - PER_ROW : 0, off = Math.max(0, Math.min(max, st.off[ri] || 0));
                 st.off[ri] = off;
+                const step = Math.round(off);
                 // touch: arrows where tiles are hidden (recorded first: a tap on one is not the tile under it)
                 if (cv.own && shown && row.hs) {
-                    if (off > 0) after.push(chevron(cv, X0 + 4, ty + TH / 2, -1, () => { st.off[ri] = Math.max(0, off - PER_ROW); dirty = true; }, letter + ':' + ri + ':<'));
+                    if (off > 0) after.push(chevron(cv, X0 + 4, ty + TH / 2, -1, () => glide(st, ri, Math.max(0, step - PER_ROW)), letter + ':' + ri + ':<'));
                     if (off < max) {
                         after.push(() => { for (let k = 0; k < 6; k++) cv.fillRect(W - 108 + k * 16, ty - 10, 16, TILE_H + 16, [15, 15, 15, Math.round(255 * (0.3 + k * 0.14))]); });
-                        after.push(chevron(cv, W - 48, ty + TH / 2, 1, () => { st.off[ri] = Math.min(max, off + PER_ROW); dirty = true; }, letter + ':' + ri + ':>'));
+                        after.push(chevron(cv, W - 48, ty + TH / 2, 1, () => glide(st, ri, Math.min(max, step + PER_ROW)), letter + ':' + ri + ':>'));
                     }
                 }
-                for (let i = Math.max(0, off - 1); i <= Math.min(n - 1, off + PER_ROW); i++) {
+                for (let i = Math.max(0, Math.floor(off) - 1); i <= Math.min(n - 1, Math.ceil(off) + PER_ROW); i++) {
                     const r = row.items[i], x = X0 + (i - off) * PITCH, key = letter + ':' + ri + ':' + r.id;
                     if (shown && x + TW > RAIL_W && x < W) (row.chan || r.act ? drawChan : drawTile)(cv, r, x, ty, key);
                     const run = r.act ? () => r.act() : row.chan ? () => openChannel(r) : () => play(r.id, r, row.all);
@@ -684,13 +701,49 @@ mgu.run({
             if (!w) return;
             const st = vs(mode), row = laid.rows[w.ri];
             if (row.hs) {
-                const off = st.off[w.ri] || 0;
-                if (w.i < off) st.off[w.ri] = w.i; else if (w.i > off + PER_ROW - 1) st.off[w.ri] = w.i - PER_ROW + 1;
+                stopGlide(st, w.ri);                       // (the controller's tile wins over a glide)
+                const off = Math.round(st.off[w.ri] || 0);
+                st.off[w.ri] = w.i < off ? w.i : w.i > off + PER_ROW - 1 ? w.i - PER_ROW + 1 : off;
             }
             const top = row.y - 8, bot = row.y + row.h;
             if (top < st.sy) st.sy = Math.max(0, top); else if (bot > st.sy + laid.viewH) st.sy = Math.min(st.max, bot - laid.viewH);
             dirty = true;
         });
+        /* A shelf moved to a tile: it glides there (GLIDE of the way a frame), the arrows' and a let-go drag's. */
+        const glides = [];
+        let glideTimer = null;
+        const stopGlide = (st, ri) => { const i = glides.findIndex((x) => x.st === st && x.ri === ri); if (i >= 0) glides.splice(i, 1); };
+        function glide(st, ri, to) {
+            const g = glides.find((x) => x.st === st && x.ri === ri);
+            if (g) g.to = to; else glides.push({ st, ri, to });
+            dirty = true;
+            if (glideTimer) return;
+            glideTimer = setInterval(() => {
+                for (let k = glides.length - 1; k >= 0; k--) {
+                    const x = glides[k], off = x.st.off[x.ri] || 0;
+                    x.st.off[x.ri] = Math.abs(x.to - off) < 0.01 ? x.to : off + (x.to - off) * GLIDE;
+                    if (x.st.off[x.ri] === x.to) glides.splice(k, 1);
+                }
+                dirty = true;
+                if (!glides.length) { clearInterval(glideTimer); glideTimer = null; }
+            }, 16);
+        }
+        // the shelf under a finger dragged sideways (at: where it went down, the page's px): it follows, then settles
+        function shelfAt(at) {
+            if (!at || !browsing() || laid.mode !== mode) return null;
+            const st = vs(mode), ri = laid.rows.findIndex((r) => r.hs && at.y >= TOP + r.y - st.sy && at.y < TOP + r.y - st.sy + r.h);
+            return ri < 0 ? null : { st, ri, max: laid.rows[ri].items.length - PER_ROW };
+        }
+        if (ctx.onSwipe) ctx.onSwipe((dx, at) => {
+            const sh = shelfAt(at);
+            if (!sh) return false;
+            stopGlide(sh.st, sh.ri);
+            const was = sh.st.off[sh.ri] || 0, off = Math.max(0, Math.min(sh.max, was + dx / PITCH));
+            sh.st.off[sh.ri] = off;
+            if (off !== was) dirty = true;
+            return off !== was;
+        });
+        if (ctx.onSwipeEnd) ctx.onSwipeEnd((at) => { const sh = shelfAt(at); if (sh) glide(sh.st, sh.ri, Math.round(sh.st.off[sh.ri] || 0)); });
         if (ctx.onScroll) ctx.onScroll((dy) => {
             if (!browsing()) return false;
             const st = vs(mode), y = Math.max(0, Math.min(st.max, st.sy + dy)), moved = y !== st.sy;
