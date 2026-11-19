@@ -292,7 +292,40 @@ def full(t, flags, *parts):
 MATRIX = struct.pack('>9I', 0x10000, 0, 0, 0, 0x10000, 0, 0, 0, 0x40000000)
 
 
-def flat_moov(ts, stsd, durs, sizes, chunks, offsets):
+# The car's media player gets only the file (MediaPlayer.playFile takes a path, nothing else), so the cluster and the
+# media screen show what the file says: iTunes-style tags in moov/udta/meta/ilst, as music players read them.
+def tags_udta(title=None, artist=None, cover=None):
+    """moov's udta with the title (\xa9nam), the channel as artist (\xa9ART) and a JPEG cover (covr); b'' when none."""
+    def text(t, v):
+        return box(t, box(b'data', struct.pack('>II', 1, 0), str(v)[:255].encode('utf-8')))  # 1: UTF-8 text
+    items = [text(t, v) for t, v in ((b'\xa9nam', title), (b'\xa9ART', artist)) if v]
+    if cover:
+        items.append(box(b'covr', box(b'data', struct.pack('>II', 13, 0), cover)))  # 13: JPEG
+    if not items:
+        return b''
+    hdlr = full(b'hdlr', 0, b'\0' * 4, b'mdir', b'appl', b'\0' * 8, b'\0')
+    return box(b'udta', full(b'meta', 0, hdlr, box(b'ilst', *items)))
+
+
+COVER_URL = 'https://i.ytimg.com/vi/{}/mqdefault.jpg'  # 320x180, the whole picture
+COVER_MAX = 256 * 1024
+
+
+def fetch_cover(vid, timeout=5):
+    """The video's thumbnail as JPEG bytes for the cover tag, or None (no picture is no failure)."""
+    ctx = ssl.create_default_context(cafile=CA if os.path.isfile(CA) else None)
+    try:
+        with urllib.request.urlopen(COVER_URL.format(vid), timeout=timeout, context=ctx) as r:
+            data = r.read(COVER_MAX + 1)
+    except (OSError, http.client.HTTPException, ValueError) as e:
+        if hasattr(e, 'close'):
+            e.close()
+        print(f'cover: {e}', file=sys.stderr, flush=True)
+        return None
+    return data if 0 < len(data) <= COVER_MAX and data[:2] == b'\xff\xd8' else None
+
+
+def flat_moov(ts, stsd, durs, sizes, chunks, offsets, udta=b''):
     stts, run = [], None
     for d in durs:
         if run and run[1] == d:
@@ -318,10 +351,10 @@ def flat_moov(ts, stsd, durs, sizes, chunks, offsets):
                 struct.pack('>HHHH', 0, 0, 0x0100, 0), MATRIX, b'\0' * 8)
     mvhd = full(b'mvhd', 0, struct.pack('>IIIIIH', 0, 0, ts, total, 0x10000, 0x0100), b'\0' * 10,
                 MATRIX, b'\0' * 24, struct.pack('>I', 2))
-    return box(b'moov', mvhd, box(b'trak', tkhd, mdia))
+    return box(b'moov', mvhd, box(b'trak', tkhd, mdia), udta)
 
 
-def flatten_m4a(src, dst, limit=None):
+def flatten_m4a(src, dst, limit=None, udta=b''):
     """Rewrite a fragmented (DASH) m4a as ftyp+moov+mdat; edit lists are dropped. Returns (dst size, ms).
     limit: only src[:limit] is written yet (the rest may be zeros): the samples entirely inside it; a plain
     MP4 then gives None (it cannot be cut)."""
@@ -373,13 +406,13 @@ def flatten_m4a(src, dst, limit=None):
             raise ValueError('audio: no samples')
         ftyp = box(b'ftyp', b'M4A ', struct.pack('>I', 0x200), b'M4A isomiso2')
         n = len(chunks)
-        head = len(ftyp) + len(flat_moov(tk['ts'], tk['stsd'], durs, sizes, chunks, [0] * n)) + 8
+        head = len(ftyp) + len(flat_moov(tk['ts'], tk['stsd'], durs, sizes, chunks, [0] * n, udta)) + 8
         offsets, o, i = [], head, 0
         for _, k in chunks:
             offsets.append(o)
             o += sum(sizes[i:i + k])
             i += k
-        moov2 = flat_moov(tk['ts'], tk['stsd'], durs, sizes, chunks, offsets)
+        moov2 = flat_moov(tk['ts'], tk['stsd'], durs, sizes, chunks, offsets, udta)
         if o - head + 8 > 0xffffffff:
             raise ValueError('audio: over 4 GB')
         with open(dst, 'wb') as g:
@@ -745,7 +778,7 @@ def extract_cmd(a):
     return 0
 
 
-def audio_ranged(a, ya, info, meta):
+def audio_ranged(a, ya, info, meta, udta=lambda: b''):
     """The audio format yt-dlp picks, fetched with ranged_get; audio.head.m4a + audio_head once the prefix
     covers max(HEAD_MIN_MS, 1.5x the rest's estimated time). None when the format is not plain https with a size."""
     f = ya.process_ie_result(copy.deepcopy(info), download=False)
@@ -770,7 +803,7 @@ def audio_ranged(a, ya, info, meta):
         rate = done / max(time.monotonic() - t0, 0.1)
         need = max(HEAD_MIN_MS, 1500 * (total - done) / rate)
         try:
-            r = flatten_m4a(src, head_part, limit=prefix)
+            r = flatten_m4a(src, head_part, limit=prefix, udta=udta())
         except (ValueError, struct.error, OSError) as e:
             print(f'head at {prefix}: {e}', file=sys.stderr, flush=True)
             gate.set()
@@ -837,18 +870,32 @@ def fetch(a):
     if not any((x.get('vcodec') or '').startswith('avc1') for x in info.get('formats') or []):
         fail('no avc1 video')
 
+    # the tags the car's player shows (title, channel, the thumbnail as cover): the cover fetched alongside, so playback
+    # never waits for it; the head takes what is there when it is written, audio.m4a waits for it up to 5 s
+    art = {'cover': None}
+
+    def cover():
+        art['cover'] = fetch_cover(a.id)
+
+    tc = threading.Thread(target=cover, daemon=True)
+    tc.start()
+
+    def udta():
+        return tags_udta(meta['title'], meta['channel'], art['cover'])
+
     def audio():
         try:
             src = None
             try:
-                src = audio_ranged(a, ya, info, meta)
+                src = audio_ranged(a, ya, info, meta, udta)
             except Exception as e:  # noqa: BLE001 - yt-dlp's own download, as before 0.2.1
                 print(f'ranged audio failed, yt-dlp downloads it: {e}', file=sys.stderr, flush=True)
             if src is None:
                 r = ya.process_ie_result(copy.deepcopy(info), download=True)
                 src = r['requested_downloads'][0]['filepath']
             part = os.path.join(a.dir, 'audio.m4a.part')
-            n, _ = flatten_m4a(src, part)
+            tc.join(timeout=5)
+            n, _ = flatten_m4a(src, part, udta=udta())
             os.replace(part, os.path.join(a.dir, 'audio.m4a'))
             os.remove(src)
             done_a['ok'] = True

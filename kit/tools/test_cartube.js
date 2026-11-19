@@ -276,13 +276,14 @@ async function appFrames() {
     const disp = hu.display;
     // parked: the car reads 0 km/h (the video gate counts no speed as moving)
     let speedH = null;
-    let batH = null;
-    hu.ctx.signals = { watch: async (i, n, h) => { if (h && h.statusCarSpeed2) { speedH = h.statusCarSpeed2; speedH({ speedVehicleCentreOfGravity: 0 }); } if (h && h.statusBattery2) batH = h.statusBattery2; return {}; } };
+    let batH = null, wheelH = null;
+    hu.ctx.signals = { watch: async (i, n, h) => { if (h && h.statusCarSpeed2) { speedH = h.statusCarSpeed2; speedH({ speedVehicleCentreOfGravity: 0 }); } if (h && h.statusBattery2) batH = h.statusBattery2; if (h && h.statusSearchSwitch1) wheelH = h.statusSearchSwitch1; return {}; } };
     // (the stub's ctx predates these: as kit/mgu.js)
     hu.ctx.hideButton = (id, hide) => disp.hideButton(id, hide);
     hu.ctx.onPageFocus = (fn) => { disp.onPageFocus = fn; };
     hu.ctx.focus = (k) => disp.focusPage(k);
     hu.ctx.onSwipe = (fn) => { disp.onSwipe = fn; };
+    hu.ctx.onTouch = (fn) => { disp.onTouch = fn; };
     hu.ctx.onSwipeEnd = (fn) => { disp.onSwipeEnd = fn; };
     hu.start();
     await until(() => d.cmds('auth_status').length, 3000, 'app connects and asks for the account');
@@ -411,6 +412,37 @@ async function appFrames() {
         await sleep(500);
         assert.strictEqual(d.cmds('seek').length, nTapSeek + 1, 'a single tap on the right third: no seek');
         console.log('ok   player: a double tap on a side third seeks 10 s');
+        // a finger on the progress bar: pressed in its middle, dragged, let go: one seek, to where it let go
+        disp.onPageFocus('ov:bar');
+        await hu.loopFn();
+        const barT = disp.pageTargets.find((t) => t.key === 'ov:bar'), sc = pl.scale;
+        const scr = (fx) => [(barT.x + barT.w * fx) * sc + pl.ox, (barT.y + barT.h / 2) * sc + pl.oy];
+        const nBar = d.cmds('seek').length;
+        assert.ok(disp.onTouch(1, ...scr(0.25)), 'the bar takes the finger');
+        disp.onTouch(2, ...scr(0.4)); await hu.loopFn();
+        assert.strictEqual(d.cmds('seek').length, nBar, 'no seek while the finger holds it');
+        disp.onTouch(3, ...scr(0.5));
+        await until(() => d.cmds('seek').length === nBar + 1, 2000, 'one seek where it let go');
+        const toMs = d.cmds('seek')[nBar].ms;
+        // a tap a quarter in: half as far as the middle (whatever the video's length)
+        await hu.loopFn();
+        disp.onTouch(1, ...scr(0.25)); disp.onTouch(3, ...scr(0.25));
+        await until(() => d.cmds('seek').length === nBar + 2, 2000, 'a tap on the bar: one seek there');
+        const quarter = d.cmds('seek')[nBar + 1].ms;
+        assert.ok(toMs > 0 && Math.abs(toMs / quarter - 2) < 0.15, 'the middle, then a quarter in: ' + toMs + ', ' + quarter);
+        assert.strictEqual(disp.onTouch(1, 10, 10), false, 'a finger away from the bar: not taken');
+        console.log('ok   player: the progress bar follows a finger, one seek where it lets go');
+        // the steering wheel: held, it seeks (one seek once let go); a tap on previous more than 3 s in: back to the start
+        assert.ok(wheelH, 'the steering wheel watched');
+        const nWheel = d.cmds('seek').length;
+        wheelH({ operationPushButtonAudioAutomaticTuningSteeringWheel: 2 });
+        await sleep(1100);
+        wheelH({ operationPushButtonAudioAutomaticTuningSteeringWheel: 0 });
+        await until(() => d.cmds('seek').length === nWheel + 1, 2000, 'held next: one seek once let go');
+        wheelH(1); await sleep(80); wheelH(0);
+        await until(() => d.cmds('seek').length === nWheel + 2, 2000, 'a tap on previous: a seek');
+        assert.strictEqual(d.cmds('seek')[nWheel + 1].ms, 0, 'previous more than 3 s in: back to the start');
+        console.log('ok   steering wheel: held seeks, a tap on previous goes back to the start');
         // the kit: a sideways flick runs on after it is let go, then ends (the shelf settles)
         const swiped = [];
         let ended = null;

@@ -786,7 +786,8 @@ Audio.prototype.button = function (b) {
 };
 Audio.prototype.seek = function (ms) {
     if (!this.mp) return Promise.resolve();
-    return this.mp.callMethod('setTime', { newTimeElapsed: ms }, 3000).catch((e) => this.opts.log('setTime failed: ' + e));
+    // (0 is ignored by the car's player - the sound plays on where it was - so the start is asked as 1 ms)
+    return this.mp.callMethod('setTime', { newTimeElapsed: Math.max(1, Math.round(ms)) }, 3000).catch((e) => this.opts.log('setTime failed: ' + e));
 };
 // Every exit path ends here. Safe to call twice.
 Audio.prototype.release = async function () {

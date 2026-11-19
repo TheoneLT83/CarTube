@@ -226,10 +226,17 @@ mgu.run({
         // it: the tile tapped (its title and channel show while the video is prepared)
         // list: the shelf or the whole grid it was picked from; the videos after it play next when one ends (autoplay)
         const QUALITIES = ['auto', '720', '480', '360'];   // app.json's Video quality values, in the button's order
-        let queue = [], nextAt = 0;
-        function play(id, it, list) {
-            show('player');
-            if (list) { const i = list.findIndex((r) => r.id === id); queue = list.slice(i + 1).filter((r) => r && !r.act && /^[\w-]{11}$/.test(r.id)); }
+        // queue: the list's videos after the one playing (next first); before: those before it (the nearest last)
+        let queue = [], before = [], nextAt = 0;
+        const playable = (r) => r && !r.act && /^[\w-]{11}$/.test(r.id);
+        // stay: play it without opening the player (the steering wheel's skip while a list shows, the sound playing on)
+        function play(id, it, list, stay) {
+            if (!stay) show('player');
+            if (list) {
+                const i = list.findIndex((r) => r.id === id);
+                queue = list.slice(i + 1).filter(playable);
+                before = list.slice(0, Math.max(0, i)).filter(playable);
+            }
             nextAt = 0;
             if (model.id === id && model.active()) return;
             model.play(id, rect(), settings.get('fill') !== false, it, { quality: settings.get('quality'), skip: sbSkip() });
@@ -239,9 +246,31 @@ mgu.run({
             if (model.state !== 'ended' || !queue.length || mode !== 'player') { nextAt = 0; return null; }
             if (!nextAt) { nextAt = Date.now() + 5000; wake(); }
             if (Date.now() < nextAt) return queue[0];
-            const r = queue.shift();
-            play(r.id, r);
+            skipNext();
             return null;
+        }
+        // the one playing as a list item (what Next and Previous step over)
+        const current = () => model.item(model.id) || { id: model.id, title: model.title, channel: model.channel };
+        // Next / Previous in the list the video came from (the steering wheel, the Next button, autoplay). Previous: back
+        // to the start when more than 3 s in or nothing is before it, as a music player does; else the video before it
+        function skipNext(stay) {
+            if (!queue.length) return false;
+            if (model.id) before.push(current());
+            const r = queue.shift();
+            play(r.id, r, null, stay);
+            return true;
+        }
+        function skipPrev(stay) {
+            if (!model.id) return false;
+            if (model.elapsed > 3000 || !before.length) {
+                if (model.state === 'playing' || model.state === 'paused') model.skip(-model.elapsed);
+                else play(model.id, current(), null, stay);                  // ended or failed: from the start again
+                return true;
+            }
+            queue.unshift(current());
+            const r = before.pop();
+            play(r.id, r, null, stay);
+            return true;
         }
         let lastPlay = null, lastList = null, lastAcct = null;
         function labels() {
@@ -293,7 +322,83 @@ mgu.run({
             clearTimeout(pendT);
             pendT = setTimeout(() => { const ms = pend; pend = 0; model.skip(ms); dirty = true; }, 350);
         }
-        const shownAt = () => Math.max(0, Math.min(model.total > 0 ? model.total : Infinity, model.elapsed + pend));
+        // a finger on a progress bar (where the kit runs the screen): pressed or dragged, the scrubber, the time and a
+        // bubble with it follow the finger; one seek where it lets go (a tap: there at once). seekBar: where this frame
+        // drew a bar ({x0, w, y0, y1} in its own units, at(sx, sy) -> [x, y] from screen px); scrub: {ms, bar} meanwhile
+        let seekBar = null, scrub = null;
+        const barMs = (b, x) => Math.round(Math.max(0, Math.min(1, (x - b.x0) / b.w)) * model.total);
+        if (ctx.onTouch) ctx.onTouch((phase, sx, sy) => {
+            if (phase === 1) {
+                scrub = null;
+                const b = seekBar;
+                if (!b || mode !== 'player' || !(model.total > 0) || (model.state !== 'playing' && model.state !== 'paused')) return false;
+                const [x, y] = b.at(sx, sy);
+                if (x < b.x0 - 24 || x > b.x0 + b.w + 24 || y < b.y0 || y > b.y1) return false;
+                clearTimeout(pendT); pend = 0;                     // (a knob seek not sent yet: the finger wins)
+                scrub = { ms: barMs(b, x), bar: b };
+                wake();
+                return true;
+            }
+            if (!scrub) return false;
+            scrub.ms = barMs(scrub.bar, scrub.bar.at(sx, sy)[0]);
+            if (phase === 3) { const ms = scrub.ms; scrub = null; model.skip(ms - model.elapsed); }
+            wake();
+            return true;
+        });
+        const shownAt = () => (scrub ? scrub.ms : Math.max(0, Math.min(model.total > 0 ? model.total : Infinity, model.elapsed + pend)));
+        // the bar just drawn, for the finger: in units of scale s from the screen's origin (ox, oy: where they start)
+        const barAt = (x0, w, y0, y1, s, ox, oy) => { seekBar = { x0, w, y0, y1, at: (sx, sy) => [(sx - (ox || 0)) / s, (sy - (oy || 0)) / s] }; };
+        // while a finger holds the bar: the time it goes to (and its chapter) in a bubble over the scrubber
+        function scrubBubble(cv, fx, y, maxX) {
+            if (!scrub) return;
+            const ex = model.extras && model.extras.id === model.id ? model.extras : null;
+            let ch = null;
+            if (ex) ex.chapters.forEach((k) => { if (k[0] <= scrub.ms) ch = k[1]; });
+            const t = clock(scrub.ms) + (ch ? '  ·  ' + ch : ''), tw = Math.min(520, cv.textWidth(t, 26, LITB) + 36);
+            const bx = Math.max(16, Math.min(fx - tw / 2, maxX - tw - 16));
+            cv.roundRect(bx, y - 62, tw, 46, 12, '#000000e0');
+            cv.text(fit(cv, t, 26, tw - 36, LITB), bx + 18, y - 30, 26, '#ffffff', LITB);
+        }
+        /* ---------- the steering wheel's next / previous ---------- */
+        // While an app plays, the car's media player does not pass these buttons on, so CarTube reads the wheel's skip
+        // rocker itself (SteeringWheelPushButton.statusSearchSwitch1: 1 previous, 2 next, 0 let go, 3 no signal; names or
+        // numbers). Let go within HOLD_MS: the next / previous video of the list; held: it seeks, 10 s a step every
+        // HOLD_STEP_MS, 30 s after HOLD_FAST steps, one seek once let go (as the knob on the bar). Only while CarTube's
+        // sound is on, or its page shows: a press while the radio plays stays the radio's. A car without the interface
+        // installs CarTube without it (app.json _optional).
+        const ROCKER = { 1: 'prev', 2: 'next', SUCHLAUF_ABWAERTS_MENUE_SKIP_LINKS: 'prev', SUCHLAUF_AUFWAERTS_MENUE_SKIP_RECHTS: 'next' };
+        const HOLD_MS = 600, HOLD_STEP_MS = 300, HOLD_FAST = 10;
+        let rocker = null, held = null;                           // held: { dir, steps, wait, rep } while pressed
+        const steerable = () => !!model.id && (model.state === 'playing' || model.state === 'preparing'
+            || ((model.state === 'paused' || model.state === 'ended') && ui.isVisible('VIEW')));
+        function holdStep() {
+            if (!held) return;
+            held.steps++;
+            turnSeek((held.dir === 'next' ? 1 : -1) * (held.steps > HOLD_FAST ? 3 : 1));
+        }
+        function steer(v) {
+            const raw = v && typeof v === 'object' ? v.operationPushButtonAudioAutomaticTuningSteeringWheel : v;
+            if (raw === 3 || raw === 'SIGNAL_UNBEFUELLT') return;   // no signal: as it was (a hold goes on)
+            const dir = ROCKER[raw] || null;
+            if (dir === rocker) return;
+            rocker = dir;
+            const was = held;
+            held = null;
+            if (was) {                                            // let go (or pushed the other way)
+                clearTimeout(was.wait); clearInterval(was.rep);
+                if (!was.steps) {
+                    log.info('steering wheel: ' + was.dir);
+                    const stay = mode !== 'player';
+                    if (was.dir === 'next') skipNext(stay); else skipPrev(stay);
+                    changed();
+                }
+            }
+            if (!dir || !steerable()) return;
+            const h = held = { dir, steps: 0, wait: null, rep: null };
+            h.wait = setTimeout(() => { if (held !== h) return; log.info('steering wheel: seek ' + dir); holdStep(); h.rep = setInterval(holdStep, HOLD_STEP_MS); }, HOLD_MS);
+        }
+        Promise.resolve(ctx.signals.watch('de.bmw.infotainment.controlelements.SteeringWheelPushButton', '1', { statusSearchSwitch1: steer }, log))
+            .catch((e) => log.warn('steering wheel: ' + e));
         // preparing: its percentage, or the network lost and the daemon trying again
         const prepText = () => (model.retry ? 'No connection - trying again (' + model.retry + ')...' : 'Preparing... ' + Math.round(model.pct || 0) + ' %');
         // a failed play: Try again (the same video, the queue kept)
@@ -336,7 +441,7 @@ mgu.run({
         let ovUntil = 0, qrUntil = 0;   // qrUntil: the On phone QR card shows until then
         function wake() { ovUntil = Date.now() + OVERLAY_MS; dirty = true; }
         // it stays while there is no moving picture to look at
-        const pinned = () => model.state !== 'playing' || !videoShown || noVideo() || !!askSeg();
+        const pinned = () => model.state !== 'playing' || !videoShown || noVideo() || !!askSeg() || !!scrub;
         const overlay = () => pinned() || Date.now() < ovUntil || Date.now() < qrUntil;
         // a tap beside the controls (no target): hides them
         // two quick taps on the player's left / right third: 10 s back / on (each more tap soon after, 10 s more)
@@ -901,11 +1006,12 @@ mgu.run({
             if (ch) cv.text(fit(cv, ch, 20, pw - 48, LIT), px + 24, top + 106, 20, C.dim, LIT);
             const bx = px + 24, bw = pw - 48, by = top + 140;
             if (model.total > 0 && model.active()) {
-                const k = Math.min(1, model.elapsed / model.total);
+                const el = shownAt(), k = Math.min(1, el / model.total), pl = cv.place;
                 cv.roundRect(bx, by, bw, 10, 5, '#ffffff26');
                 cv.roundRect(bx, by, Math.max(10, bw * k), 10, 5, C.red);
-                cv.circle(bx + bw * k, by + 5, 11, '#ffffff');
-                cv.text(clock(model.elapsed), bx, by + 40, 20, C.text, LIT);
+                cv.circle(bx + bw * k, by + 5, scrub ? 15 : 11, '#ffffff');
+                if (pl && (model.state === 'playing' || model.state === 'paused')) barAt(bx, bw, by - 36, by + 46, pl.scale, pl.ox, pl.oy);
+                cv.text(clock(el), bx, by + 40, 20, C.text, LIT);
                 cv.text(clock(model.total), bx + bw, by + 40, 20, C.dim, { literal: true, align: 'right' });
                 const chap = model.chapter && model.chapter();
                 if (chap) cv.text(fit(cv, typeof chap === 'string' ? chap : chap.title || '', 20, bw - 200, LITB), bx + bw / 2, by + 40, 20, C.text, { literal: true, font: 'bold', align: 'center' });
@@ -966,8 +1072,10 @@ mgu.run({
                 if (ex) sbSegs(ex).forEach((g) => cv.fillRect(at(g[0]), by, Math.max(4, at(g[1]) - at(g[0])), 10, sbColor(g)));
                 if (ex) ex.chapters.forEach((k) => { if (k[0] > 0) cv.fillRect(at(k[0]) - 2, by, 4, 10, C.bg); });
                 if (bf) cv.circle(at(el), by + 5, 24, '#3ea6ff');
-                cv.circle(at(el), by + 5, bf ? 18 : 14, C.red);
+                cv.circle(at(el), by + 5, bf || scrub ? 18 : 14, C.red);
                 tg(x0 - 10, by - 36, bw + 20, 80, run(() => model.toggle()), 'ov:bar', 0, turnSeek);
+                barAt(x0, bw, by - 40, by + 50, cv.place.scale);
+                scrubBubble(cv, at(el), by - 6, SW);
                 cv.text(clock(el), x0, by + 50, 26, C.dim, LIT);
                 cv.text('-' + clock(tot - el), x0 + bw, by + 50, 26, C.dim, { literal: true, align: 'right' });
             } else if (model.state === 'preparing') cv.text(prepText(), x0, by + 50, 26, C.dim, LIT);
@@ -991,7 +1099,7 @@ mgu.run({
             else if (model.state === 'error' && model.id) big('ov:play', mid - 100, 72, true, again, (c) => retryGlyph(cv, mid - 100, cy, 30, c));
             if (queue.length) {
                 const nx = mid + 300;
-                big('ov:next', nx, 58, false, () => { const r = queue.shift(); play(r.id, r); }, (c) => {
+                big('ov:next', nx, 58, false, () => skipNext(), (c) => {
                     cv.quad([[nx - 22, cy - 26], [nx - 22, cy + 26], [nx + 12, cy], [nx - 22, cy - 26]], c); cv.fillRect(nx + 14, cy - 26, 9, 52, c);
                 });
                 const up = 'Up next  ·  ' + String(queue[0].title || queue[0].id), uw = Math.min(700, cv.textWidth(up, 26, LIT) + 50);
@@ -1115,8 +1223,10 @@ mgu.run({
                 if (ex) sbSegs(ex).forEach((g) => cv.fillRect(at(g[0]), y, Math.max(3, at(g[1]) - at(g[0])), 6, sbColor(g)));   // SponsorBlock: skipped green, asked yellow
                 if (ex) ex.chapters.forEach((c) => { if (c[0] > 0) cv.fillRect(at(c[0]) - 2, y, 4, 6, '#000000'); });
                 if (bf) cv.circle(fx, y + 3, 18, '#ffffff');
-                cv.circle(fx, y + 3, bf ? 14 : 10, C.red);
+                cv.circle(fx, y + 3, bf || scrub ? 14 : 10, C.red);
                 tg(x0 - 10, y - 34, w + 20, 70, run(() => model.toggle()), 'ov:bar', 0, turnSeek);
+                barAt(x0, w, y - 40, y + 40, s);
+                scrubBubble(cv, fx, y - 8, SW);
                 const tt0 = clock(el) + ' / ' + clock(model.total), tw = cv.textWidth(tt0, 24, LITB), chap = model.chapter();
                 cv.text(tt0, x0, SH - 22, 24, '#ffffff', LITB);
                 if (chap) cv.text(fit(cv, '·  ' + chap, 24, w - tw - 20, LIT), x0 + tw + 14, SH - 22, 24, '#dddddd', LIT);
@@ -1155,6 +1265,7 @@ mgu.run({
                 dirty = false; lastRev = model.rev; lastT = now;
                 const cv = ctx.canvas(W, H).clear(C.bg);
                 frameNo++;
+                seekBar = null;                // (set again where this frame draws a bar)
                 ownNow = !!cv.own;
                 if (full && !(mode === 'player' && model.active() && !noVideo())) full = false;     // driving, or nothing playing
                 // BMW's strip (its status icons and clock) shows over every page; the full-screen video alone covers it

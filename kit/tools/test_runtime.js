@@ -79,6 +79,16 @@ function page(d, v) {
 const cases = [];
 const test = (name, fn) => cases.push([name, fn]);
 
+test('a letter the atlas lacks: the closest one it has (Romanian comma-below as cedilla, an accented letter as its base), emoji dropped', async () => {
+    const fonts = require('../runtime/fonts');
+    const w = (cp, adv) => [0, 0, 0, 0, 0, 0, adv];
+    const f = { glyphs: { 0x15f: w(0x15f, 9), 0x53: w(0x53, 7), 0x61: w(0x61, 5), 0x74: w(0x74, 4) } };
+    assert.strictEqual(fonts.measure(f, 'ș'), 9, 'ș as ş');
+    assert.strictEqual(fonts.measure(f, 'Ș'), 7, 'Ș: no Ş in the atlas, its base S');
+    assert.strictEqual(fonts.measure(f, 'ạ'), 5, 'ạ as a');
+    assert.strictEqual(fonts.measure(f, 'ț😀'), 4, 'ț as t, the emoji dropped');
+});
+
 test('unchanged frames: not sent again, but one a second (the renderer hides an app quiet for 3 s)', async () => {
     const t = await setup(), c = t.c;
     try {

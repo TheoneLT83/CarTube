@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.0.6 (app) and 1.0.3 (service)
+
+- **The progress bar follows a finger**: in the player, full screen and the podcast view while driving, a finger
+  dragged along the bar moves the scrubber with a bubble showing the time (and chapter) it goes to; the video goes
+  there when it lets go. A tap on the bar jumps there. The controller on the bar still plays or pauses, and turning it
+  still seeks 10 s a detent.
+- **The steering wheel's next / previous**: a short press plays the next or previous video of the list it came from
+  (previous: back to the start when more than 3 s in); held, it seeks, 10 s a step, faster after 3 s, one seek when
+  let go. Only while CarTube plays or its page shows: with the radio on, the buttons stay the radio's.
+- **Title, channel and picture on the car's media screens and the cluster**: the service writes them into the audio
+  file the car's player plays (it takes nothing but the file), with the video's thumbnail as the cover.
+- **Back to the start works**: the car's player ignored a seek to 0 ms; it now goes to 1 ms.
+- **Letters the font lacks** (Romanian ș ț Ș Ț, Vietnamese and other accented letters) are drawn as the closest letter
+  the font has instead of being left out of titles.
+- (Ideas from JustAnotherPU's RideTube, GPL-3.0; written for CarTube.)
+
 ## 1.0.5 (app)
 
 - **Two quick taps on the player's left or right third** skip 10 s back or on; each more tap soon after, 10 s more.

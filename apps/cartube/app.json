@@ -7,7 +7,7 @@
     "loggingId": "CTB8",
     "description": "Video in the car, for iDrive 8: an unofficial client for YouTube. Your Home, Subscriptions and Watch later (signed in on the car), search with an on-screen keyboard, channels and chapters; the sound through the car's media player, the picture only while parked (a podcast view while driving). Touch only. Needs the cartube-d tool and the GPU renderer (mgu-render)."
   },
-  "version": "1.0.5",
+  "version": "1.0.6",
   "license": "GPL-3.0-or-later",
   "vendor": "custom",
   "loggingId": "OAC1",
@@ -18,6 +18,10 @@
     },
     "de.bmw.infotainment.vehicle.CDS": {
       "statusBattery2": "rs"
+    },
+    "de.bmw.infotainment.controlelements.SteeringWheelPushButton": {
+      "statusSearchSwitch1": "rs",
+      "_optional": "the steering wheel's next / previous"
     }
   },
   "screens": [

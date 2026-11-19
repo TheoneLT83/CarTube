@@ -154,6 +154,24 @@ class Offline(unittest.TestCase, Pipeline):
         self.check_audio(self.a, out)
         self.assertEqual(atoms(out), ['ftyp', 'moov', 'mdat'])
 
+    def test_audio_tags(self):
+        """title, channel and cover in moov/udta/meta/ilst, as ffprobe (a music player) reads them; the audio as before"""
+        out, plain = os.path.join(self.tmp, 'tagged.m4a'), os.path.join(self.tmp, 'untagged.m4a')
+        cover = b'\xff\xd8' + b'\0' * 64
+        ytfetch.flatten_m4a(self.a, out, udta=ytfetch.tags_udta('Ein Titel ș', 'A channel', cover))
+        ytfetch.flatten_m4a(self.a, plain)
+        packets = lambda f: subprocess.run(['ffprobe', '-v', 'error', '-select_streams', 'a:0', '-show_entries',
+                                            'packet=pts,size', '-of', 'csv=p=0', f], capture_output=True, text=True,
+                                           check=True).stdout
+        self.assertEqual(packets(out), packets(plain))  # the same audio, only the tags added
+        self.assertEqual(atoms(out), ['ftyp', 'moov', 'mdat'])
+        r = subprocess.run(['ffprobe', '-v', 'error', '-show_entries', 'format_tags=title,artist', '-of', 'json', out],
+                           capture_output=True, text=True, check=True)
+        self.assertEqual(json.loads(r.stdout)['format']['tags'], {'title': 'Ein Titel ș', 'artist': 'A channel'})
+        with open(out, 'rb') as f:
+            self.assertIn(b'covr', f.read())
+        self.assertEqual(ytfetch.tags_udta(), b'')
+
     def test_audio_head_of_a_prefix(self):
         """the first half written, the rest zeros (ranged_get's holes): a head of the samples in that half"""
         with open(self.a, 'rb') as f:
