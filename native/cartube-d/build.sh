@@ -16,5 +16,7 @@ sh "$here/tools/build_pyz.sh" "$py"
 node "$here/test/test_ytd.js" >/dev/null
 node "$here/test/test_thumb.js" >/dev/null
 "$py" -I "$here/test/test_ytfetch.py"
+node "$here/test/test_proxy.js" >/dev/null
+"$py" -I "$here/test/test_proxy.py"
 cp "$ytdec" "$here/build/ytdec"
 node "$MGU_STORE/deploy/hu" artifact "$here" --out "$here/dist"

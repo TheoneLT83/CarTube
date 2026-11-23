@@ -8,9 +8,15 @@ After=local-fs.target
 # root: SOME/IP to the MediaPlayer.
 User=root
 ExecStartPre=-/bin/sh -c 'mkdir -p /var/opt/cartube-d/cache /var/opt/cartube-d/log /var/opt/cartube-d/state && chmod 0755 /var/opt/cartube-d && chmod 0711 /var/opt/cartube-d/cache && chmod 0700 /var/opt/cartube-d/state'
+# WP8: the playing video's window in RAM, not on flash: a tmpfs capped at 256 MB (it holds only what is written, up to
+# about 50 MB while a video plays; the audio stays on flash). 0711 as the cache: nobody lists it. ytd.js uses it only as
+# this mount point itself; without it the window goes to the flash cache.
+ExecStartPre=-/bin/sh -c 'mkdir -p /run/cartube-media && { grep -q " /run/cartube-media tmpfs " /proc/mounts || mount -t tmpfs -o size=256m,mode=0711,nosuid,nodev,noexec tmpfs /run/cartube-media; }'
+# frees the RAM when the service stops (busy: kept, the next start takes it as it is)
+ExecStopPost=-/bin/sh -c 'umount /run/cartube-media 2>/dev/null; rmdir /run/cartube-media 2>/dev/null; true'
 # youtube.com/tv answers with 11 kB of headers; Node 8.14+ refuses more than 8 kB (HPE_HEADER_OVERFLOW)
 ExecStart=/usr/bin/node --max-http-header-size=65536 /var/opt/cartube-d/current/ytd.js
-# The app (group tm_oap_app) must traverse the dir; ctl.sock itself is 0660 root:tm_oap_app.
+# The app must traverse the dir; ctl.sock itself is <app uid>:root 0600 (0660 root:tm_oap_app if the uid is unknown).
 RuntimeDirectory=cartube-d
 RuntimeDirectoryMode=0755
 # The daemon starts idle and stays active with no app and no SOME/IP yet

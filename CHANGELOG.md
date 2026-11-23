@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.1.0 (service)
+
+The service brought up to RideTube's service 0.5.4 (JustAnotherPU), with CarTube's own parts kept (iDrive 8's interface
+folders and audio route, the bot check's other players, plain error words):
+
+- **Streams the part you watch**: only the video around where you are, up to 2 minutes ahead, in a RAM folder
+  (`/run/cartube-media`); a far seek starts from there. Far fewer writes to the head unit's storage.
+- **VP9** where YouTube has it at the chosen quality, H.264 otherwise; a head unit that can't decode VP9 falls back to
+  H.264 and stays there. The decoder and yt-dlp are RideTube 0.5.4's.
+- **The MGU Store's proxy**: set in the Store, used for the fetches and the name lookups.
+- **Resumes at the later point**: where you left it in the car, or where YouTube has you from another device.
+- **A voice assistant's pause** while it listens (root-only signals).
+- **Audio on more head units**: the player's interface descriptions from MainApp, else the unit's catalog, else
+  built in.
+- **Sends nothing to a log server**: RideTube's log reports have no server in CarTube.
+
+The service also answers downloads, a library and a phone remote, which the app does not show yet.
+
 ## 1.0.6 (app) and 1.0.3 (service)
 
 - **The progress bar follows a finger**: in the player, full screen and the podcast view while driving, a finger

@@ -1,7 +1,8 @@
 'use strict';
 // node22 thumb.js <id> [--lease <path>]: i.ytimg.com's mqdefault.jpg as 320x180 RGBA (230400 bytes) on stdout.
-// Runs as the fetch uid (env {}, cwd /); the car has no image library, so the JPEG is decoded here.
+// Runs as the fetch uid (env: only the Store's proxy, RT_PROXY; cwd /); the car has no image library, so the JPEG is decoded here.
 const https = require('https');
+const proxy = require('./proxy.js');
 const decode = require('./vendor/jpeg-js/decoder.js');
 
 const W = 320, H = 180, MAX = 2 * 1024 * 1024, TIMEOUT_MS = 8000;
@@ -19,21 +20,29 @@ function uplinkLookup(leaseFile) {
     };
 }
 
-function fetchJpeg(id, lookup) {
+// via (proxy.js fromEnv's): the TLS through its tunnel, the name looked up there
+function fetchJpeg(id, lookup, via) {
     return new Promise((resolve, reject) => {
-        const req = https.request({ host: 'i.ytimg.com', path: '/vi/' + id + '/mqdefault.jpg', lookup, headers: { 'user-agent': 'Mozilla/5.0' } }, (res) => {
-            // 404 is YouTube's placeholder for private/removed videos; redirects are not followed
-            if (res.statusCode !== 200) { res.resume(); return reject(new Error('http ' + res.statusCode)); }
-            const parts = [];
-            let n = 0;
-            res.on('data', (d) => { n += d.length; if (n > MAX) req.destroy(new Error('body over 2 MB')); else parts.push(d); });
-            res.on('end', () => resolve(Buffer.concat(parts)));
-            res.on('error', reject);
-        });
-        req.setTimeout(TIMEOUT_MS, () => req.destroy(new Error('timeout')));
-        setTimeout(() => req.destroy(new Error('timeout')), TIMEOUT_MS).unref();
-        req.on('error', reject);
-        req.end();
+        if (!via) return ask(null);
+        return proxy.connect(via, 'i.ytimg.com', 443, { timeoutMs: TIMEOUT_MS, lookup }, (e, sock) => (e ? reject(e)
+            : ask(() => require('tls').connect({ socket: sock, servername: 'i.ytimg.com' }))));
+        function ask(cc) {
+            const o = { host: 'i.ytimg.com', path: '/vi/' + id + '/mqdefault.jpg', lookup, headers: { 'user-agent': 'Mozilla/5.0' } };
+            if (cc) Object.assign(o, { port: 443, defaultPort: 443, createConnection: cc });
+            const req = https.request(o, (res) => {
+                // 404 is YouTube's placeholder for private/removed videos; redirects are not followed
+                if (res.statusCode !== 200) { res.resume(); return reject(new Error('http ' + res.statusCode)); }
+                const parts = [];
+                let n = 0;
+                res.on('data', (d) => { n += d.length; if (n > MAX) req.destroy(new Error('body over 2 MB')); else parts.push(d); });
+                res.on('end', () => resolve(Buffer.concat(parts)));
+                res.on('error', reject);
+            });
+            req.setTimeout(TIMEOUT_MS, () => req.destroy(new Error('timeout')));
+            setTimeout(() => req.destroy(new Error('timeout')), TIMEOUT_MS).unref();
+            req.on('error', reject);
+            req.end();
+        }
     });
 }
 
@@ -60,7 +69,7 @@ if (require.main === module) {
     const li = a.indexOf('--lease');
     if (!/^[A-Za-z0-9_-]{11}$/.test(id || '')) fail('bad id');
     if (li > 0 && !a[li + 1]) fail('--lease needs a path');
-    fetchJpeg(id, uplinkLookup(li > 0 ? a[li + 1] : undefined))
+    fetchJpeg(id, uplinkLookup(li > 0 ? a[li + 1] : undefined), proxy.fromEnv())
         .then((jpeg) => { const b = thumbRgba(jpeg); process.stdout.write(b, () => process.exit(0)); })
         .catch((e) => fail(e.message));
 }
