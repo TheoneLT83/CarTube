@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.0.7 (app) and 1.2.0 (service)
+
+RideTube's service 0.5.7 and 0.5.8 (JustAnotherPU), with CarTube's parts kept:
+
+- **Repeat**: in the player (left of the full-screen controls, and beside Fill on the page player) and in Settings. With
+  it on, a video plays again from 0:00 at its end: no new lookup, only the video's first minutes fetched again (a
+  downloaded one, nothing).
+- **Lighter playback**: after a minute of pause the decoder closes its session (it kept a core busy about 4 %).
+- **Sound refused at the start** ("ITEM_UNPLAYABLE" before any of it played): the service waits 2 s and gives the
+  player the file once more.
+- A stop while a resumed video was restarting no longer makes the next video skip its resume point.
+- The log names the audio stream the car got and each file given to the player.
+- The decoder and yt-dlp are RideTube 0.5.7's.
+
 ## 1.1.0 (service)
 
 The service brought up to RideTube's service 0.5.4 (JustAnotherPU), with CarTube's own parts kept (iDrive 8's interface

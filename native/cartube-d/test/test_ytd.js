@@ -295,6 +295,7 @@ async function main() {
         await waitUntil(() => called('playFile').length > 0);
         tick(0);
         await waitUntil(() => called('setTime').length > 0);
+        await waitUntil(() => ytdecLines().some((l) => / in resume$/.test(l)));   // (the fake ytdec writes its log a moment later)
         return { buttons: called('sendButtonEvent').map((x) => x.a.button), connects: called('connect').length, playFile: called('playFile').map((x) => x.a.path),
             setTime: called('setTime').map((x) => x.a.newTimeElapsed), states: c.evs.filter((x) => x.ev === 'state').map((x) => x.state),
             ytdec: ytdecLines().map((l) => l.split(' ').slice(1).join(' ')).filter((l) => /^in (pause|resume|seek)/.test(l)) };
@@ -507,6 +508,105 @@ async function main() {
         assert.strictEqual(ours().length, 0);
     });
 
+    await t('loop on (0.5.8, the app\'s Repeat): the end of file plays it again from 0 - no ended, no paused, nothing fetched; the player connected again, ytdec sought to 0; loop off: ended', async () => {
+        c.send({ cmd: 'loop', on: true });
+        try {
+            await playing();
+            tick(58000);
+            calls.length = 0; fs.writeFileSync(ytlog, ''); c.clear();
+            subs.playerState('PLAYER_STATE_STOP');
+            await waitUntil(() => called('playFile').length === 1);
+            assert.strictEqual(path.basename(called('playFile')[0].a.path), 'audio.m4a', 'the same audio file');
+            assert.deepStrictEqual(calls.filter((x) => x.m === 'connect' || x.m === 'disconnect').map((x) => x.m), ['disconnect', 'connect'], 'a new connection, as a resume after a stop');
+            tick(300);                                      // the new file's first tick: then to 0
+            await waitUntil(() => called('setTime').length === 1);
+            assert.deepStrictEqual(called('setTime').map((x) => x.a.newTimeElapsed), [1], 'the start (the player takes 1 ms at least)');
+            await waitUntil(() => ytdecLines().some((l) => / in seek 0$/.test(l)));   // the fake ytdec writes its log late
+            assert.ok(c.evs.some((x) => x.ev === 'time' && x.elapsed === 0), 'the app told: 0');
+            assert.ok(!c.evs.some((x) => x.ev === 'state' && x.state !== 'playing'), 'only playing said: ' + JSON.stringify(c.evs.filter((x) => x.ev === 'state')));
+            assert.strictEqual(d.state, 'playing');
+            assert.strictEqual(ours().length, 1);
+            subs.playerState('PLAYER_STATE_PLAY');
+            tick(5000);
+            c.send({ cmd: 'loop', on: false });
+            await waitUntil(() => d.loop === false);
+            tick(58000);
+            subs.playerState('PLAYER_STATE_STOP');
+            await c.waitFor((x) => x.ev === 'state' && x.state === 'ended');
+            assert.strictEqual(ours().length, 0);
+        } finally { c.send({ cmd: 'loop', on: false }); }
+    });
+
+    await t('a stop while a replay waits for its file\'s first tick (a loop, a resume) ends that wait: the next play\'s first tick is its own', async () => {
+        c.send({ cmd: 'loop', on: true });
+        try {
+            await playing();
+            tick(58000);
+            subs.playerState('PLAYER_STATE_STOP');         // the loop's replay: waiting for the new file's first tick
+            await waitUntil(() => d.tickWaiter);
+            c.send({ cmd: 'stop' });
+            await c.waitFor((x) => x.ev === 'state' && x.state === 'idle');
+            assert.strictEqual(d.tickWaiter, null, 'the wait ended with the stop');
+        } finally { c.send({ cmd: 'loop', on: false }); }
+        calls.length = 0;
+        await playing();
+        tick(2000);
+        await waitUntil(() => d.elapsed === 2000);        // taken as this play's time, not swallowed by the old wait
+        c.send({ cmd: 'stop' }); await c.waitFor((x) => x.ev === 'state' && x.state === 'idle');
+    });
+
+    await t('loop, signed in: the pass kept done and its watchtime told to its end at the loop; the next range starts at 0 (never st past et)', async () => {
+        const saved = d.account, id = 'HHLOOPHIST1';
+        mkVideo(id);
+        d.account = Object.assign(Object.create(Object.getPrototypeOf(saved)), saved, { status: () => ({ state: 'signed_in' }), token: async () => 'TOK' });
+        c.send({ cmd: 'loop', on: true });
+        try {
+            yt.calls.length = 0;
+            await playing(id);
+            await waitUntil(() => yt.calls.some((x) => /stats\/playback/.test(x.url)));
+            tick(58000);
+            const wt = () => yt.calls.filter((x) => /stats\/watchtime/.test(x.url)).map((x) => x.url);
+            subs.playerState('PLAYER_STATE_STOP');
+            await waitUntil(() => wt().length === 1);
+            assert.ok(/&st=0&et=58\.0$/.test(wt()[0]), 'the pass to its end: ' + wt()[0]);
+            assert.strictEqual(d.positions()[id].done, true, 'kept as watched');
+            assert.strictEqual(d.positions()[id].ms, 58000);
+            await waitUntil(() => called('playFile').length >= 1);
+            tick(300);
+            await waitUntil(() => called('setTime').length >= 1);
+            d.cur.track.at = 0;                             // the minute's ping due
+            tick(5000);
+            await waitUntil(() => wt().length === 2);
+            assert.ok(/&st=0&et=5\.0$/.test(wt()[1]), 'the second pass from 0: ' + wt()[1]);
+        } finally { c.send({ cmd: 'loop', on: false }); d.account = saved; }
+        c.send({ cmd: 'stop' }); await c.waitFor((x) => x.ev === 'state' && x.state === 'idle');
+        rmrf(path.join(cache, id));
+    });
+
+    await t('loop carried over a client replacing another mid-video (until the app says it again); it ends with that video', async () => {
+        c.send({ cmd: 'loop', on: true });
+        await waitUntil(() => d.loop === true);
+        await playing();
+        const old = c;
+        c = await client(d.opts.sock);                      // the app again: replaces the old client, the video plays on
+        await waitUntil(() => d.client && old.destroyed);
+        assert.strictEqual(d.loop, 'carried', 'held until the new client says loop');
+        assert.strictEqual(d.state, 'playing');
+        tick(58000);
+        calls.length = 0;
+        subs.playerState('PLAYER_STATE_STOP');
+        await waitUntil(() => called('playFile').length === 1);
+        assert.strictEqual(d.state, 'playing', 'looped, not ended');
+        c.send({ cmd: 'stop' }); await c.waitFor((x) => x.ev === 'state' && x.state === 'idle');
+        assert.strictEqual(d.loop, false, 'a carried loop ends with its video');
+        c.send({ cmd: 'loop', on: true });
+        await waitUntil(() => d.loop === true);
+        const old2 = c;
+        c = await client(d.opts.sock);                      // nothing playing: a new client starts with no loop
+        await waitUntil(() => old2.destroyed);
+        assert.strictEqual(d.loop, false);
+    });
+
     const fetchLog = () => JSON.parse(fs.readFileSync(ctl + '.log', 'utf8'));
     const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return false; } };
     const fetchPlay = async (id) => {
@@ -713,6 +813,31 @@ async function main() {
         await wp8Stop();
         fs.unlinkSync(path.join(tmp, 'wp8-old-index'));
         fs.unlinkSync(path.join(tmp, 'wp8-old-part'));
+    });
+
+    await t('WP8 loop: the end of a stream plays it again from 0: only the video window fetched again from 0 (the lookup and audio kept), no ended, no preparing', async () => {
+        const id = 'WP8LOOPEND1', fdir = path.join(cache, id);
+        await ramPlay(id);
+        const old = fetchLog().pid;
+        c.send({ cmd: 'loop', on: true });
+        try {
+            subs.playerState('PLAYER_STATE_PLAY');
+            d.fetchedMs = 600000;                           // as if all of it had come (the fake stops at 12 s)
+            tickAt(598000);
+            await waitUntil(() => posLines().indexOf('pos 598000') >= 0);
+            calls.length = 0; c.clear();
+            subs.playerState('PLAYER_STATE_STOP');
+            const l = await newFetch(old);
+            assert.ok(l.argv.indexOf('--video-only') >= 0, 'the video only');
+            assert.ok(l.argv.indexOf('--start-ms') < 0, 'from 0: ' + l.argv.join(' '));
+            assert.strictEqual(argAfter(l.argv, '--info'), path.join(fdir, 'stream-info.json'), 'the first lookup kept');
+            assert.ok(fs.existsSync(path.join(fdir, 'audio.m4a')), 'the audio kept');
+            await waitUntil(() => called('playFile').length === 1);
+            assert.strictEqual(path.basename(called('playFile')[0].a.path), 'audio.m4a');
+            assert.ok(!c.evs.some((x) => x.ev === 'state' && x.state !== 'playing'), 'only playing said: ' + JSON.stringify(c.evs.filter((x) => x.ev === 'state')));
+            assert.strictEqual(d.cur.restreams, 1);
+        } finally { c.send({ cmd: 'loop', on: false }); }
+        await wp8Stop();
     });
 
     await t('WP8: a seek forwards past what is fetched + streamJumpMs restreams there', async () => {
@@ -2463,8 +2588,8 @@ async function main() {
     });
 
     await t('hello: service version and caps; lang / region kept for the connection; a bad one dropped, never refused', async () => {
-        const FROZEN = ['health', 'related', 'hist', 'ytdlp', 'remote', 'proxy', 'stream', 'download'];
-        assert.deepStrictEqual(CAPS, ['related', 'hist', 'health', 'remote', 'ytdlp', 'download', 'proxy'], 'what of the protocol answers for real (WP1: related, hist; WP4: health; WP9: remote; WP6: ytdlp; 0.5.0: download; 0.5.3: proxy, store or off)');
+        const FROZEN = ['health', 'related', 'hist', 'ytdlp', 'remote', 'proxy', 'stream', 'download', 'loop'];
+        assert.deepStrictEqual(CAPS, ['related', 'hist', 'health', 'remote', 'ytdlp', 'download', 'proxy', 'loop'], 'what of the protocol answers for real (WP1: related, hist; WP4: health; WP9: remote; WP6: ytdlp; 0.5.0: download; 0.5.3: proxy, store or off; 0.5.8: loop)');
         assert.ok(CAPS.every((x) => FROZEN.indexOf(x) >= 0), 'caps only from the frozen names');
         c.clear();
         c.send({ cmd: 'hello', app: '0.4.0', lang: 'ru', region: 'RU' });
@@ -3260,6 +3385,155 @@ async function main() {
         await idle();
     });
 
+    const unplayable = () => subs.playbackErrorEvent({ event: 'ITEM_UNPLAYABLE' });
+    const started = async (id) => {
+        if (!fs.existsSync(path.join(cache, id))) mkVideo(id);
+        fs.writeFileSync(ytlog, ''); setMode('ok');
+        c.clear(); calls.length = 0;
+        c.send({ cmd: 'play', id: id, rect: '1280x720' });
+        await c.waitFor((x) => x.ev === 'state' && x.state === 'playing' && x.id === id);
+        await waitUntil(() => called('playFile').length === 1);
+        calls.length = 0; c.clear();
+    };
+    d.opts.unplayableWaitMs = 60;
+
+    await t('WP2 ITEM_UNPLAYABLE before the first tick: the file again on a new connection once, then plays; a second one -> error', async () => {
+        await started('WP2UNPLAY01');
+        unplayable();
+        await sleep(20);
+        assert.strictEqual(called('connect').length, 0, 'not before the wait');
+        await waitUntil(() => called('playFile').length === 1);
+        assert.deepStrictEqual(calls.map((x) => x.m).filter((m) => m !== 'sendButtonEvent'), ['disconnect', 'connect', 'playFile']);
+        assert.strictEqual(path.basename(called('playFile')[0].a.path), 'audio.m4a');
+        assert.ok(!c.evs.some((x) => x.ev === 'error'), JSON.stringify(c.evs));
+        assert.strictEqual(ours().length, 1);
+        assert.strictEqual(d.switching, false);
+        await waitUntil(() => ytdecIns().slice(-2).join() === 'in pause,in resume');   // the picture waited with the sound
+        tick(1000);
+        await c.waitFor((x) => x.ev === 'time' && x.elapsed === 1000);
+        await idle();
+        await started('WP2UNPLAY01');   // a new play: its own retry
+        unplayable();
+        await waitUntil(() => called('playFile').length === 1);
+        unplayable();                    // the retried file unplayable too
+        await c.waitFor((x) => x.ev === 'error' && x.msg === 'playback error {"event":"ITEM_UNPLAYABLE"}');
+        assert.strictEqual(called('playFile').length, 1, 'once more, not more');
+        assert.strictEqual(ours().length, 0);
+        await idle();
+    });
+
+    await t('WP2 ITEM_UNPLAYABLE after a tick: an error at once, no retry', async () => {
+        await cached('WP2UNPLAY02');
+        unplayable();
+        await c.waitFor((x) => x.ev === 'error' && x.msg === 'playback error {"event":"ITEM_UNPLAYABLE"}');
+        assert.strictEqual(called('playFile').length, 0);
+        assert.strictEqual(ours().length, 0);
+        await idle();
+    });
+
+    await t('WP2 ITEM_UNPLAYABLE on the head, audio.m4a complete during the wait: the retry plays audio.m4a, the head goes', async () => {
+        const id = 'WP2UNPLAYH1';
+        await headPlay(id, 'hold');
+        assert.strictEqual(path.basename(called('playFile')[0].a.path), 'audio.head.m4a');
+        calls.length = 0; c.clear();
+        d.opts.unplayableWaitMs = 1500;
+        try {
+            unplayable();
+            await sleep(20);
+            fs.writeFileSync(ctl, 'full');
+            await waitUntil(() => d.fullReady);
+            assert.strictEqual(called('connect').length, 0, 'audio_ready came during the wait');
+            await waitUntil(() => called('playFile').length === 1, 4000);
+        } finally { d.opts.unplayableWaitMs = 60; }
+        assert.strictEqual(path.basename(called('playFile')[0].a.path), 'audio.m4a');
+        assert.strictEqual(called('connect').length, 1);
+        assert.strictEqual(d.head, null);
+        assert.ok(!fs.existsSync(path.join(hdir(id), 'audio.head.m4a')), 'head removed');
+        assert.ok(!c.evs.some((x) => x.ev === 'error'), JSON.stringify(c.evs));
+        tick(1000);
+        await c.waitFor((x) => x.ev === 'time' && x.elapsed === 1000);
+        await idle();
+    });
+
+    await t('WP2 ITEM_UNPLAYABLE on the head, audio.m4a complete during the retry\'s connect: the head again, then the switch to audio.m4a', async () => {
+        const id = 'WP2UNPLAYH2';
+        await headPlay(id, 'hold');
+        calls.length = 0; c.clear();
+        let go, asked = 0;
+        const gate = new Promise((r) => { go = r; });
+        const undo = hook(d.audio.cc, (m, a, real) => (m === 'connect' ? (asked++, gate.then(real)) : real()));
+        try {
+            unplayable();
+            await waitUntil(() => asked === 1);
+            fs.writeFileSync(ctl, 'full');
+            await waitUntil(() => d.fullReady);
+            go();
+            await waitUntil(() => called('playFile').length === 2, 4000);
+        } finally { undo(); go(); }
+        assert.deepStrictEqual(called('playFile').map((x) => path.basename(x.a.path)), ['audio.head.m4a', 'audio.m4a']);
+        await waitUntil(() => d.head === null && !d.switching);
+        assert.strictEqual(called('connect').length, 1);
+        assert.ok(!c.evs.some((x) => x.ev === 'error'), JSON.stringify(c.evs));
+        await idle();
+    });
+
+    await t('WP2 ITEM_UNPLAYABLE on a resume past the head (AX4NVT): the head again, the first tick still goes to the resume point and waits for audio.m4a', async () => {
+        const id = 'WP2UNPLAYR1', was = d.opts.resume;
+        d.opts.resume = true;   // (off, a play ignores `at`)
+        try {
+        fs.writeFileSync(ctl, 'hold'); fs.writeFileSync(ytlog, ''); setMode('ok');
+        c.clear(); calls.length = 0;
+        c.send({ cmd: 'play', id: id, rect: '1280x720', at: 300000 });
+        await c.waitFor((x) => x.ev === 'state' && x.state === 'playing', 4000);
+        await waitUntil(() => called('playFile').length === 1);
+        assert.strictEqual(path.basename(called('playFile')[0].a.path), 'audio.head.m4a');
+        subs.playerState('PLAYER_STATE_PLAY');
+        calls.length = 0; c.clear();
+        unplayable();
+        await waitUntil(() => called('playFile').length === 1);
+        assert.strictEqual(path.basename(called('playFile')[0].a.path), 'audio.head.m4a');
+        await waitUntil(() => !d.switching);   // (the player's first tick follows playFile's reply)
+        tickAt(0);   // the retried file's first tick: the play's start applies now
+        await waitUntil(() => d.headWait);
+        await waitUntil(() => ytdecLines().some((x) => / in seek 300000$/.test(x)));   // ytdec at the resume point
+        fs.writeFileSync(ctl, 'full');
+        await waitUntil(() => d.head === null && !d.headWait && !d.switching, 4000);
+        assert.ok(!c.evs.some((x) => x.ev === 'error'), JSON.stringify(c.evs));
+        } finally { d.opts.resume = was; }
+        await idle();
+    });
+
+    await t('WP2 ITEM_UNPLAYABLE, stopped during the wait: no connect after it, nothing left connected', async () => {
+        await started('WP2UNPLAY03');
+        d.opts.unplayableWaitMs = 300;
+        try {
+            unplayable();
+            await sleep(20);
+            await idle();
+            await sleep(400);
+        } finally { d.opts.unplayableWaitMs = 60; }
+        assert.strictEqual(called('connect').length, 0);
+        assert.strictEqual(ours().length, 0);
+    });
+
+    await t('WP2 ITEM_UNPLAYABLE, paused and resumed during the wait: one connection, the resume\'s', async () => {
+        await started('WP2UNPLAY04');
+        d.opts.unplayableWaitMs = 400;
+        try {
+            unplayable();
+            await sleep(20);
+            c.send({ cmd: 'pause' });
+            await c.waitFor((x) => x.ev === 'state' && x.state === 'paused');
+            c.send({ cmd: 'resume' });
+            await c.waitFor((x) => x.ev === 'state' && x.state === 'playing');
+            await sleep(600);
+        } finally { d.opts.unplayableWaitMs = 60; }
+        assert.strictEqual(called('connect').length, 1, JSON.stringify(calls.map((x) => x.m)));
+        assert.strictEqual(ours().length, 1);
+        assert.ok(!c.evs.some((x) => x.ev === 'error'), JSON.stringify(c.evs));
+        await idle();
+    });
+
     await t('WP2 fetcher dies mid-play: fetched again into the same folder (no --info) after the wait, the sound untouched, ytdec again; it completes', async () => {
         fs.writeFileSync(ctl, 'spill'); setMode('ok'); fs.writeFileSync(ytlog, '');   // a whole fetch (a stream: restreamLater, WP8)
         d.opts.fetchRetryMs = [300, 300];
@@ -3348,6 +3622,29 @@ async function main() {
         tick(0);
         await waitUntil(() => called('setTime').length === 1);
         assert.deepStrictEqual(called('setTime')[0].a, { newTimeElapsed: 5000 });
+        await idle();
+    });
+
+    await t('noUpscale (app 0.6.6): ytdec --no-upscale, kept over a quality restart; without it (older app) none', async () => {
+        fs.writeFileSync(ctl, ''); fs.writeFileSync(ytlog, ''); setMode('ok');
+        const argv = () => ytdecLines().filter((l) => / argv /.test(l));
+        c.clear();
+        c.send({ cmd: 'play', id: 'DemoVideo01', rect: '1920x720', fill: false, noUpscale: true });
+        await c.waitFor((x) => x.ev === 'state' && x.state === 'playing');
+        await waitUntil(() => argv().length > 0);
+        assert.ok(argv()[0].endsWith(' --rect 1920x720 --no-upscale --log ' + path.join(tmp, 'ytdec.log')), argv()[0]);
+        assert.strictEqual(d.cur.noUpscale, true);
+        await idle();
+        fs.writeFileSync(ytlog, '');
+        await fetchPlay('NOUPSCALE01');
+        tick(5000); await sleep(100);
+        fs.writeFileSync(ytlog, '');
+        d.cur.noUpscale = true;   // (fetchPlay sends none) as an app 0.6.6 play would set it
+        c.clear();
+        c.send({ cmd: 'quality', quality: '480' });
+        await c.waitFor((x) => x.ev === 'state' && x.state === 'playing', 4000);
+        await waitUntil(() => argv().length > 0);
+        assert.ok(/ --no-upscale --log /.test(argv()[argv().length - 1]), 'quality restart: ' + argv().join('\n'));
         await idle();
     });
 

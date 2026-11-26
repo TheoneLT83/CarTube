@@ -93,6 +93,7 @@ mgu.run({
         /* ---------- the daemon ---------- */
         const ctl = new Ctl(process.env.MGU_YT_SOCKET || SOCKET, log);
         const model = new Model((o) => ctl.send(o));
+        model.wantLoop = settings.get('repeat') === true;
         let mode = 'home', browse = 'home', dirty = true;   // browse: the list the player goes back to
         const changed = () => { dirty = true; if (ctx.background) ctx.background('playing', model.active()); labels(); };
         const isFeed = (m) => FEEDS.indexOf(m) >= 0;
@@ -1028,7 +1029,9 @@ mgu.run({
             let x = bx;
             x += 12 + G.button(cv, t, x, oy, 0, 46, qv === 'auto' ? 'Auto' : qv + 'p', () => { const q = QUALITIES[(QUALITIES.indexOf(qv) + 1) % QUALITIES.length]; settings.set('quality', q); model.quality(q); dirty = true; }, { key: 'p:q' });
             x += 12 + G.button(cv, t, x, oy, 0, 46, 'Full screen', () => { full = true; wake(); }, { key: 'p:full', busy: pod || !videoShown });
-            G.button(cv, t, x, oy, 0, 46, fl ? 'Fill' : 'Fit', () => { settings.set('fill', !fl); model.fill(!fl); dirty = true; }, { key: 'p:zoom' });
+            x += 12 + G.button(cv, t, x, oy, 0, 46, fl ? 'Fill' : 'Fit', () => { settings.set('fill', !fl); model.fill(!fl); dirty = true; }, { key: 'p:zoom' });
+            const rp = settings.get('repeat') === true;
+            G.button(cv, t, x, oy, 0, 46, rp ? 'Repeat on' : 'Repeat off', () => { settings.set('repeat', !rp); model.loop(!rp); dirty = true; }, { key: 'p:loop' });
         }
         /*
          * The player where the kit runs the screen: the video over the whole surface (no header, no bar), the
@@ -1036,7 +1039,7 @@ mgu.run({
          * the page's px (dx, dy). Hidden, the same keys cover the whole screen and only show it again (the
          * controller stays on its key, so a turn or a press wakes it; a tap anywhere too).
          */
-        const OVK = ['ov:back', 'ov:qr', 'ov:rw', 'ov:play', 'ov:ff', 'ov:q', 'ov:zoom', 'ov:bar'];
+        const OVK = ['ov:back', 'ov:qr', 'ov:loop', 'ov:rw', 'ov:play', 'ov:ff', 'ov:q', 'ov:zoom', 'ov:bar'];
         // podcast mode (driving): artwork, title, chapter, the bar with chapter ticks and skipped segments, controls
         // a glove can hit (-10 s, play/pause, +10 s, next in the row), the next video, a skipped-sponsor notice
         function drawPodcast(cv, SW, SH, LX, tg, run, live) {
@@ -1208,6 +1211,13 @@ mgu.run({
                     if (fl) cv.fillRect(zx - 22, cy - 15, 44, 30, c); else cv.fillRect(zx - 12, cy - 15, 24, 30, c);
                 });
                 cv.text(fl ? 'Unzoom' : 'Zoom', zx, cy + 76, 22, '#dddddd', { literal: true, align: 'center' });
+                // left: Repeat (the video again from 0 at its end)
+                const rp = settings.get('repeat') === true, rx = LX + 150;
+                ctl('ov:loop', rx, cy, 42, () => { settings.set('repeat', !rp); model.loop(!rp); }, (c) => {
+                    cv.arc(rx, cy, 17, 21.5, 30, 330, rp ? C.red : c);
+                    cv.quad([[rx + 12, cy - 24], [rx + 24, cy - 13], [rx + 10, cy - 7], [rx + 12, cy - 24]], rp ? C.red : c);
+                });
+                cv.text(rp ? 'Repeat on' : 'Repeat', rx, cy + 76, 22, '#dddddd', { literal: true, align: 'center' });
             } else if (model.state === 'error' && model.id && model.connected) {
                 ctl('ov:play', cx, cy, 58, again, (c) => retryGlyph(cv, cx, cy, 26, c));
                 cv.text('Try again', cx, cy + 100, 26, '#dddddd', { literal: true, align: 'center' });

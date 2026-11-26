@@ -1757,6 +1757,8 @@ def audio_ranged(a, ya, info, meta, udta=lambda: b''):
     f = ya.process_ie_result(copy.deepcopy(info), download=False)
     f = (f.get('requested_downloads') or [f])[0]
     total = f.get('filesize')
+    print(f"audio format {f.get('format_id')} {f.get('acodec')} {f.get('asr')} Hz {f.get('audio_channels')} ch "
+          f"{total} B {f.get('protocol')}", file=sys.stderr, flush=True)  # ITEM_UNPLAYABLE: which stream the player got
     if f.get('protocol') not in ('https', 'http') or not total or not f.get('url'):
         return None
     src = os.path.join(a.dir, 'audio.src.m4a')

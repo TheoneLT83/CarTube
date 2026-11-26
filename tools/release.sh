@@ -3,7 +3,7 @@
 # tagged "catalog" of TheoneLT83/CarTube:
 #   cartube     CarTube for iDrive 7, as a source package the head unit builds (kit/tools/build.py)
 #   cartube8    CarTube for iDrive 8, as a source package the head unit builds (kit/tools/build.py --hmi ID8)
-#   cartube-d   its service (packed here; ytdec and ytdlp.pyz as in JustAnotherPU's release 0.5.4, checked below)
+#   cartube-d   its service (packed here; ytdec and ytdlp.pyz as in JustAnotherPU's release 0.5.7, checked below)
 #   cartube-node22       Node.js 22 for the service (packed here from tools/cartube-node22; the binary as in JustAnotherPU/mgu-apps)
 # Usage: MGU_STORE=<a clone of github.com/TheoneLT83/mgu-store> tools/release.sh
 # The prebuilt binaries are taken from JustAnotherPU's published releases and checked against the sha256 pinned here
@@ -24,14 +24,14 @@ take() {     # tgz member sha256 out
     tar -xzf "$1" -O "$2" > "$4"
     [ "$(sha "$4")" = "$3" ] || { echo "release.sh: $2 in $1 is not the pinned one" >&2; exit 1; }
 }
-fetch "$UP/ridetube/releases/download/catalog/jap-ridetube-d@0.5.4.tgz" 0dc69d9ada6e603604b185f0541173b7f7396e4e5584e9f86141415b37423bdf "$dl/cartube-d@0.5.4.tgz"
+fetch "$UP/ridetube/releases/download/catalog/jap-ridetube-d@0.5.7.tgz" 67d126522f972ae5c0f3dd9fcc8d69b2efdd93913d83fd9da4440a7ea62ab728 "$dl/cartube-d@0.5.7.tgz"
 fetch "$UP/mgu-apps/releases/download/catalog/jap-node22@22.23.4.tgz" c62a8e2a3803b858b4d1020cb19746c8bd9ae8b753145f80c5adf7d781692743 "$dl/cartube-node22@22.23.4.tgz"
 
-# the service: this repository's files, the decoder and yt-dlp (2026.10.26) as released upstream
+# the service: this repository's files, the decoder and yt-dlp as released upstream
 d=$root/native/cartube-d
 mkdir -p "$d/build"
-take "$dl/cartube-d@0.5.4.tgz" files/ytdec 0c5f30e4776437ac79e2c19429205a1ed8bef5a61df2a3de68dea8b46e7812d0 "$d/build/ytdec"
-take "$dl/cartube-d@0.5.4.tgz" files/ytdlp.pyz de5752605c1956331d5e992bec75a65324bff2a0a25b58704ea3f989a13f846f "$d/build/ytdlp.pyz"
+take "$dl/cartube-d@0.5.7.tgz" files/ytdec 8c42bc7cd6f9b99f3523014bfcb7d50e387c3dc04ec440897a545784daee20c1 "$d/build/ytdec"
+take "$dl/cartube-d@0.5.7.tgz" files/ytdlp.pyz 421315a930d6166ee8f4fb582d0e2d1d20281309f2ef162b6a79c7de0995c88b "$d/build/ytdlp.pyz"
 chmod 755 "$d/build/ytdec"
 # Node.js 22 (unofficial-builds linux-x64-glibc-217, loader /lib/ld-linux-x86-64.so.2) and its licence
 n=$root/tools/cartube-node22

@@ -114,7 +114,7 @@ class Model {
 
     setConnected(on) {
         this.connected = on;
-        if (on) { this.send({ cmd: 'status' }); this.send({ cmd: 'auth_status' }); this.send({ cmd: 'positions' }); this.videoOn = null; this._video(); } else {
+        if (on) { this.send({ cmd: 'status' }); this.send({ cmd: 'auth_status' }); this.send({ cmd: 'positions' }); this.videoOn = null; this._video(); if (this.wantLoop) this.send({ cmd: 'loop', on: true }); } else {
             this.searching = false; this.state = 'idle'; this.pending.clear();
             this.auth = { state: 'unknown', code: null, url: null, msg: null };
             Object.keys(this.feeds).forEach((w) => { this.feeds[w].loading = false; });
@@ -306,6 +306,8 @@ class Model {
         return any;
     }
     stop() { return this.active() ? this.send({ cmd: 'stop' }) : false; }
+    /** Repeat: the service (1.2.0) plays the video again from 0 at its end; said again on each connection */
+    loop(on) { this.wantLoop = !!on; return this.connected ? this.send({ cmd: 'loop', on: !!on }) : false; }
     /** while playing: the same video again at this quality, from where it is */
     quality(q) { return this.active() ? this.send({ cmd: 'quality', quality: q }) : false; }
     /** fill (crop to the screen) or fit (the whole picture) for the playing video */

@@ -30,13 +30,13 @@ const MEDIA_FILES = ['audio.m4a', 'index.bin', 'video.h264'];
 const VIDEO_DIR_MODE = 0o711;
 // thumb.rgba length -> [w, h]: 160x90 in caches from older proxies, 320x180 since 0.1.6
 const THUMB_SIZES = { 57600: [160, 90], 230400: [320, 180] };
-const VERSION = '1.1.0';   // component.json's (test_ytd.js checks): sent with a log report
+const VERSION = '1.2.0';   // component.json's (test_ytd.js checks): sent with a log report
 // the day this build was released (UTC), bumped with VERSION at each release (tools/release.py refuses one in the
 // future). A head unit clock before it is provably wrong: only then does TLS skip the certificate dates (certTime)
-const BUILT = '2026-11-21';
+const BUILT = '2026-11-26';
 // what `hello` says this build answers for real. The frozen names: health, related, hist (feed hist|liked), ytdlp,
 // remote, proxy, stream, download (library, download, remove, auto_download). A package adds its name here (through the integrator) once its command works
-const CAPS = ['related', 'hist', 'health', 'remote', 'ytdlp', 'download', 'proxy'];
+const CAPS = ['related', 'hist', 'health', 'remote', 'ytdlp', 'download', 'proxy', 'loop'];
 const LANG_RE = /^[a-z]{2}$/, REGION_RE = /^[A-Z]{2}$/;   // hello's lang ("ru") and region ("RU")
 // the log relay (send_logs posts <REPORT_URL>/v1/report): none for CarTube, so no log leaves the car (send_logs answers
 // logs_error closed). MGU_YT_REPORT_URL or opts.reportUrl set one (tests)
@@ -97,6 +97,7 @@ function defaults() {
         headMarginMs: 1500,  // on the head file: wait for audio.m4a this close to the head's end
         audioRetryMs: 1000,  // the audio start (connect + playFile) failed: tried once more after this
         underrunWaitMs: 500, // the player ran dry (underrun): started again at the clock after this
+        unplayableWaitMs: 2000, // ITEM_UNPLAYABLE before the first tick: the file given to the player once more after this
         thumbMax: 150,
         ytTimeoutMs: 10000,
         keep: 0,             // played videos kept in the cache besides the downloads (0: deleted once played)
@@ -1448,6 +1449,7 @@ function Daemon(o) {
     this.elapsed = 0;
     this.total = 0;
     this.stoppedAt = null;
+    this.loop = false;     // `loop` (the app's Repeat): at the audio's end the video plays again from 0 (loopAgain), no `ended`
     this.lastTimeEv = 0;
     this.sawPlay = false;
     this.ticking = false;
@@ -2044,6 +2046,9 @@ Daemon.prototype.onClient = function (c) {
     }
     this.client = c;
     this.hl = this.gl = null;   // hello's lang and region hold for this connection only
+    // so does `loop`: the app says it again after hello. A client replacing another mid-video carries it over until
+    // then ('carried'), so the video does not end in between; a carried loop ends with that video (stop)
+    this.loop = this.loop && this.cur ? 'carried' : false;
     this.clockSaid = undefined; // what hello (then `clock`) told this connection about the clock; undefined: no hello yet
     c.setEncoding('utf8');
     let buf = '';
@@ -2083,13 +2088,14 @@ Daemon.prototype.onLine = function (line) {
     case 'ytdlp': return typeof m.auto === 'boolean' ? this.setYtdlpAuto(m.auto) : this.sendYtdlp();
     case 'search': return this.search(m.q);
     case 'thumb': return this.thumb(m.id);
-    case 'play': return this.play(m.id, m.rect, !!m.fill, m.at, m.quality, m.skip);
+    case 'play': return this.play(m.id, m.rect, !!m.fill, m.at, m.quality, m.skip, undefined, m.noUpscale === true);
     case 'pause': return this.pause();
     case 'resume': return this.resume();
     case 'seek': return this.seek(m.ms);
     case 'stop': return this.stop('idle');
     case 'video': return this.setVideo(!!m.on);
     case 'fill': return this.setFill(!!m.on);
+    case 'loop': this.loop = !!m.on; this.log('loop ' + (this.loop ? 'on' : 'off')); return undefined;
     case 'quality': return this.requality(m.quality);
     case 'auth': return this.account.start();
     case 'auth_status': return this.emit(this.account.status());
@@ -2624,9 +2630,11 @@ Daemon.prototype.pruneThumbs = function (tdir) {
 
 // ---- playback
 // restore: {ms, paused, fill, height}, a quality restart of the same video: back to ms (even under 10 s), paused if it was.
+// noUpscale: the app (0.6.6+) draws the picture into the rect itself, so ytdec may send it at the video's own size
+// (--no-upscale); an older app gets the rect-sized frame with its bars as before.
 // Every play keeps its start in this.restart until its first tick puts it there; a pause, resume, seek (or fill) sent
 // meanwhile changes it (the last word counts), a stop or another play replaces it.
-Daemon.prototype.play = async function (id, rect, fill, at, quality, skip, restore) {
+Daemon.prototype.play = async function (id, rect, fill, at, quality, skip, restore, noUpscale) {
     if (!isVid(id)) return this.emit({ ev: 'error', msg: 'bad id' });
     if (!/^\d{2,4}x\d{2,4}$/.test(String(rect))) rect = '1280x720';
     const own = restore || { ms: 0, paused: false, height: qualityHeight(quality, readJson(this.opts.leaseFile)) };
@@ -2647,7 +2655,7 @@ Daemon.prototype.play = async function (id, rect, fill, at, quality, skip, resto
     const mb = readFetchFile(path.join(dir, 'meta.json'), (n) => n <= META_MAX);
     let chapters;
     try { chapters = mb ? JSON.parse(mb.toString('utf8')).chapters : undefined; } catch (e) { /* none */ }
-    this.cur = { id: id, title: meta0.title, durationMs: meta0.duration_s > 0 ? meta0.duration_s * 1000 : undefined, dir: dir, rect: rect, fill: fill, gen: gen, height: qualityHeight(quality, readJson(this.opts.leaseFile)),
+    this.cur = { id: id, title: meta0.title, durationMs: meta0.duration_s > 0 ? meta0.duration_s * 1000 : undefined, dir: dir, rect: rect, fill: fill, noUpscale: !!noUpscale, gen: gen, height: qualityHeight(quality, readJson(this.opts.leaseFile)),
         skip: Array.isArray(skip) ? skip.filter((x) => typeof x === 'string') : null, chapters: chapters };
     const was = this.positions()[id];
     // the furthest of where it was left here and YouTube's own position (at: another device's): seek there on the first tick
@@ -2740,6 +2748,9 @@ Daemon.prototype.play = async function (id, rect, fill, at, quality, skip, resto
 // marilykinson-glitch's car); gen: the play or resume it belongs to, gone stale -> the first error, no second try
 Daemon.prototype.startAudio = async function (file, gen) {
     this.headFile = path.basename(file) === 'audio.head.m4a'; // the player's file: paused on the head, onFullAudio drops `head` first
+    let size = '?';
+    try { size = fs.statSync(file).size; } catch (e) { /* missing: playFile says so */ }
+    this.log('audio: ' + path.basename(file) + ' (' + size + ' B) to the player');
     try {
         return await this.audio.play(file);
     } catch (e) {
@@ -3070,6 +3081,10 @@ Daemon.prototype.stop = async function (reason) {
         if (this.cur && this.cur.track) this.ping(this.cur, true, !!(p && p.done));
     }
     const g = ++this.gen;
+    if (reason && this.loop === 'carried') this.loop = false;   // a loop carried over a reconnect: that video's only
+    // a replay still waiting for its file's first tick (a resume, a loop) ends here: left waiting, the next play's first
+    // tick (the one that takes it to its resume point) would only wake it
+    if (this.tickWaiter) { const w = this.tickWaiter; this.tickWaiter = null; w(); }
     this.ticking = false;
     this.killYtdec();
     await Promise.all([this.audio.release(), this.stopFetch()]);
@@ -3212,6 +3227,28 @@ Daemon.prototype.replayFile = async function (why, me) {
     this.lastTickAt = Date.now(); // the clock extrapolates from here, not from before the stop
     await this.audio.seek(at);
 };
+// `loop` on, the audio at its end: the same video again from 0 with nothing torn down. The player stopped at the file's
+// end, so this is a stop mid-file held at 0 (seek keeps stoppedAt) and started again there (replayAt: a new connection,
+// as resume does); no `paused` or `ended` said. The lookup and audio.m4a stay; a stream's window is fetched again from 0
+// (seek's restream: the video only), a whole video (a download) is just sought. ytdec stays up after its eof (a seek
+// plays again). SponsorBlock skips again. False (not looped): not playing the full audio yet, or a start under way.
+Daemon.prototype.loopAgain = function () {
+    const c = this.cur;
+    if (!c || this.state !== 'playing' || this.head || !this.fullReady || this.restart) return false;
+    this.log('loop ' + c.id + ': again from 0');
+    // the pass watched to its end: kept (done) and told to the History before the clock goes back; the next watchtime
+    // range starts at 0 (left at the end, it would run backwards: st past et)
+    this.savePos(true);
+    if (c.track) { this.ping(c, true); c.track.st = 0; }
+    (c.segs || []).forEach((x) => { x.done = false; });
+    this.stoppedAt = this.elapsed;   // (held: seek moves it to 0 and leaves the stopped player alone)
+    this.heldAt = null;
+    this.eof = false;
+    this.seek(0).catch((e) => this.log('loop seek: ' + e));
+    this.emit({ ev: 'time', elapsed: 0, total: this.total });
+    this.replayAt('loop').catch((e) => this.log('loop: ' + e));
+    return true;
+};
 Daemon.prototype.seek = async function (ms) {
     ms = Math.max(0, Math.floor(Number(ms) || 0));
     if (this.restart) { this.restart.ms = ms; this.restart.sought = true; } // the start under way ends there, not where it was left
@@ -3267,7 +3304,7 @@ Daemon.prototype.refetch = async function (quality, h) {
     await this.stop(null);
     if (this.restart !== restore) return undefined;   // stopped, replaced or asked again meanwhile: this one is cancelled
     this.rmTree(c.dir);
-    return this.play(c.id, c.rect, c.fill, null, quality, c.skip, restore);
+    return this.play(c.id, c.rect, c.fill, null, quality, c.skip, restore, c.noUpscale);
 };
 
 // ---- MediaPlayer events
@@ -3342,6 +3379,7 @@ Daemon.prototype.onPlayerState = function (v) {
     if (v === 'PLAYER_STATE_STOP' && this.sawPlay) {
         this.sawPlay = false;
         if (!this.total || this.total - this.elapsed < 4000) {
+            if (this.loop && this.loopAgain()) return;
             this.log('audio ended');
             this.stop('ended').catch((e) => this.log('stop: ' + e));
             return;
@@ -3364,6 +3402,10 @@ Daemon.prototype.onPlaybackError = function (v) {
     if (!this.ticking) return undefined;
     const msg = 'playback error ' + JSON.stringify(v);
     const fail = (m) => this.failPlayback(m).catch((e) => this.log(e));
+    if (/ITEM_UNPLAYABLE/.test(msg) && this.cur && !this.cur.unplayableRetried && !this.total && !this.paused &&
+        !this.headWait && !this.switching && !this.recovering && !this.replayingNow()) {
+        return this.retryUnplayable(msg).catch((e) => this.log(e));
+    }
     if (!/UNDERRUN/.test(msg)) return fail(msg);
     if (this.switching || this.headWait || this.recovering || this.paused || this.replayingNow()) {
         this.log('audio: underrun at ' + this.elapsed + (this.recovering ? ' while recovering' : this.paused ? ' while paused' : this.switching || this.headWait ? ' during the head -> full switch' : ' while the file restarts') + ', ignored');
@@ -3378,6 +3420,38 @@ Daemon.prototype.onPlaybackError = function (v) {
     if (this.underruns.length >= UNDERRUN_MAX) return fail('audio underrun: ' + UNDERRUN_MAX + ' recoveries in a minute, stopped');
     this.underruns.push(now);
     return this.recover().catch((e) => this.log('underrun recovery: ' + e));
+};
+// ITEM_UNPLAYABLE right after playFile, no tick yet (AX4NVT, NW2JEL 2026-11-24/25, our car 2026-11-09): the player had
+// read the file's metadata, so the file was opened. Once per video: a new connection and the same file (or audio.m4a,
+// complete meanwhile); the deep-resume seek still follows the first tick. A second one: the error, as before.
+// shortcut: root cause unproven (player/route state or codec), one blind retry; drop it once the cause is known
+Daemon.prototype.retryUnplayable = async function (msg) {
+    const gen = this.gen;
+    this.cur.unplayableRetried = true;
+    this.switching = true;   // the dead file's STOP and times are not ours
+    this.sawPlay = false;
+    this.toYtdec('pause');   // no sound meanwhile: the picture waits too (as recover() does)
+    this.log('audio: ' + msg + ' before the first tick, the player again in ' + this.opts.unplayableWaitMs + ' ms');
+    try {
+        await this.audio.release();
+        await sleep(this.opts.unplayableWaitMs);
+        // stopped, paused, a resume's replay or reconnected meanwhile
+        if (gen !== this.gen || this.state !== 'playing' || this.paused || this.replayingNow() || this.audio.connId !== null) return;
+        if (this.fullReady && this.head) { // audio.m4a complete meanwhile: that one, the head goes
+            this.head = null;
+            try { fs.unlinkSync(path.join(this.cur.dir, 'audio.head.m4a')); } catch (e) { /* gone */ }
+        }
+        await this.startAudio(path.join(this.cur.dir, this.head ? 'audio.head.m4a' : 'audio.m4a'), gen);
+    } catch (e) {
+        if (gen === this.gen) { this.switching = false; await this.failPlayback(msg); }
+        return;
+    } finally {
+        if (gen === this.gen) this.switching = false;
+        if (gen === this.gen && this.state === 'playing' && !this.paused) this.toYtdec('resume');
+    }
+    // (connected after a teardown had released: let it go too)
+    if (gen !== this.gen && (this.state === 'error' || this.state === 'idle')) await this.audio.release().catch(() => undefined);
+    if (gen === this.gen && this.head && this.fullReady && !this.paused) await this.switchToFull(); // audio.m4a came during the connect (onFullAudio skipped it)
 };
 Daemon.prototype.recover = async function () {
     const gen = this.gen;
@@ -3400,6 +3474,7 @@ Daemon.prototype.spawnYtdec = function (seekMs) {
     const c = this.cur;
     const args = ['--dir', c.vdir || c.dir, '--rect', c.rect];
     if (c.fill) args.push('--fill');
+    if (c.noUpscale) args.push('--no-upscale');
     args.push('--log', path.join(this.opts.logDir, 'ytdec.log'));
     let child;
     try {
